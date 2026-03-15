@@ -256,9 +256,10 @@ export function PipelineTimelineView() {
   type ResTypeFilter = 'rt' | 'buf' | 'param';
   const [filterText,  setFilterText]  = useState('');
   const [filterTypes, setFilterTypes] = useState<Set<ResTypeFilter>>(new Set());
-  const [filterDead,  setFilterDead]  = useState(false);
-  const [filterUnused, setFilterUnused] = useState(false);
-  const [filterPos,   setFilterPos]   = useState<{ x: number; y: number } | null>(null);
+  const [filterDead,       setFilterDead]       = useState(false);
+  const [filterUnused,     setFilterUnused]     = useState(false);
+  const [filterNonOverlap, setFilterNonOverlap] = useState(false);
+  const [filterPos,        setFilterPos]        = useState<{ x: number; y: number } | null>(null);
 
   const addMenuRef     = useRef<HTMLDivElement>(null);
   const addResRef      = useRef<HTMLDivElement>(null);
@@ -394,7 +395,29 @@ export function PipelineTimelineView() {
   }, [usageMap]);
 
   // ── Filter logic ───────────────────────────────────────────────────────────
-  const hasActiveFilter = filterText !== '' || filterTypes.size > 0 || filterDead || filterUnused;
+
+  // RTs that have at least one non-overlapping partner (aliasing candidates):
+  // for each (rt1, rt2) pair — if their spans don't intersect, add both.
+  const nonOverlapRtIds = useMemo(() => {
+    const rtIds = new Set(resources.renderTargets.map((r) => r.id));
+    const rtSpans = [...resourceSpans.entries()].filter(
+      ([rid]) => rtIds.has(rid) && resourceSpans.get(rid)!.minX !== Infinity,
+    );
+    const result = new Set<ResourceId>();
+    for (const [rid1, s1] of rtSpans) {
+      for (const [rid2, s2] of rtSpans) {
+        if (rid1 === rid2) continue;
+        // No overlap: one ends before the other starts
+        if (s1.maxX < s2.minX || s2.maxX < s1.minX) {
+          result.add(rid1);
+          result.add(rid2);
+        }
+      }
+    }
+    return result;
+  }, [resources.renderTargets, resourceSpans]);
+
+  const hasActiveFilter = filterText !== '' || filterTypes.size > 0 || filterDead || filterUnused || filterNonOverlap;
 
   const filteredRows = useMemo(() => {
     if (!hasActiveFilter) return displayRows;
@@ -415,9 +438,11 @@ export function PipelineTimelineView() {
         const u = usageMap.get(rid);
         if (u && (u.writers.length > 0 || u.readers.length > 0)) return false;
       }
+      if (filterNonOverlap && !nonOverlapRtIds.has(rid)) return false;
       return true;
     });
-  }, [displayRows, filterText, filterTypes, filterDead, filterUnused, rtMap, bufMap, paramMap, deadWriteIds, usageMap, hasActiveFilter]);
+  }, [displayRows, filterText, filterTypes, filterDead, filterUnused, filterNonOverlap,
+      rtMap, bufMap, paramMap, deadWriteIds, usageMap, nonOverlapRtIds, hasActiveFilter]);
 
   const filteredAccessMaps = useMemo(
     () => filteredRows.map((rid) => ({ rid, map: allAccessMaps.get(rid) ?? new Map() })),
@@ -659,9 +684,26 @@ export function PipelineTimelineView() {
   }, [selectedPassId, pipeline.passes]);
 
   // Active resource IDs for row highlighting:
-  // manual selection takes priority; fall back to pass-driven
-  const activeResourceIds: Set<ResourceId> =
-    selectedResourceIds.size > 0 ? selectedResourceIds : passResourceIds;
+  // In non-overlap mode with a single RT selected, highlight the selected RT + all
+  // filtered RTs that don't overlap with it. Otherwise fall back to manual / pass-driven.
+  const activeResourceIds = useMemo((): Set<ResourceId> => {
+    if (filterNonOverlap && selectedResourceIds.size === 1) {
+      const selId   = [...selectedResourceIds][0];
+      const selSpan = resourceSpans.get(selId);
+      if (selSpan && selSpan.minX !== Infinity && rtMap.has(selId)) {
+        const partners = new Set<ResourceId>([selId]);
+        for (const rid of filteredRows) {
+          if (rid === selId || !rtMap.has(rid)) continue;
+          const span = resourceSpans.get(rid);
+          if (!span || span.minX === Infinity) continue;
+          if (selSpan.maxX < span.minX || span.maxX < selSpan.minX) partners.add(rid);
+        }
+        return partners;
+      }
+    }
+    if (selectedResourceIds.size > 0) return selectedResourceIds;
+    return passResourceIds;
+  }, [filterNonOverlap, selectedResourceIds, filteredRows, resourceSpans, rtMap, passResourceIds]);
   const hasResourceFocus = activeResourceIds.size > 0;
 
   // ── Resource focus: dim unrelated passes (only when resources are manually selected) ──
@@ -1276,8 +1318,9 @@ export function PipelineTimelineView() {
           {/* Toggle flags */}
           <div className="px-3 py-2 flex flex-col gap-1.5">
             {[
-              { state: filterDead,   set: setFilterDead,   label: '⚠ Dead writes only',  desc: 'Written but never read' },
-              { state: filterUnused, set: setFilterUnused, label: '∅ Unused only',        desc: 'Not referenced by any pass' },
+              { state: filterDead,       set: setFilterDead,       label: '⚠ Dead writes only',          desc: 'Written but never read' },
+              { state: filterUnused,     set: setFilterUnused,     label: '∅ Unused only',               desc: 'Not referenced by any pass' },
+              { state: filterNonOverlap, set: setFilterNonOverlap, label: '⇄ Non-overlapping RTs only',  desc: 'Render targets with no temporal overlap — aliasing candidates' },
             ].map(({ state, set, label, desc }) => (
               <label key={label} className="flex items-center gap-2 cursor-pointer group">
                 <input type="checkbox" checked={state} onChange={(e) => set(e.target.checked)}
@@ -1291,7 +1334,7 @@ export function PipelineTimelineView() {
           {hasActiveFilter && (
             <div className="px-3 pb-2 pt-0.5 border-t border-zinc-800">
               <button
-                onClick={() => { setFilterText(''); setFilterTypes(new Set()); setFilterDead(false); setFilterUnused(false); }}
+                onClick={() => { setFilterText(''); setFilterTypes(new Set()); setFilterDead(false); setFilterUnused(false); setFilterNonOverlap(false); }}
                 className="text-[10px] text-zinc-600 hover:text-sky-400 transition-colors">
                 Clear all filters
               </button>

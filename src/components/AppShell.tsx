@@ -9,6 +9,8 @@ import { ResourceDrawer } from '../features/resources/ResourceDrawer';
 import { JsonPreviewPanel } from './JsonPreviewPanel';
 import { Badge } from './ui/Badge';
 import { validateDocument } from '../validation';
+import { StatsModal } from '../features/stats/StatsModal';
+import { computeMemStats, formatBytes } from '../utils/memoryStats';
 
 // ─── Resize hooks ─────────────────────────────────────────────────────────────
 
@@ -173,44 +175,69 @@ function RightInspector() {
   );
 }
 
-// ─── Validation status bar ────────────────────────────────────────────────────
+// ─── Status bar ───────────────────────────────────────────────────────────────
 
-function ValidationStatusBar({ onToggle, open }: { onToggle: () => void; open: boolean }) {
+function StatusBar({
+  onToggleValidation, validationOpen,
+  onOpenStats,
+}: {
+  onToggleValidation: () => void; validationOpen: boolean;
+  onOpenStats: () => void;
+}) {
   const { pipeline, resources } = useStore();
   const issues   = useMemo(() => validateDocument(pipeline, resources), [pipeline, resources]);
   const errors   = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
+  const vram     = useMemo(() => computeMemStats(resources, pipeline, { w: 1920, h: 1080 }), [resources, pipeline]);
 
   return (
-    <button
-      onClick={onToggle}
-      title={open ? 'Hide validation issues' : 'Show validation issues'}
-      className={`flex items-center gap-2.5 px-3 h-6 w-full text-left border-t transition-colors
-        ${open
-          ? 'bg-zinc-800 border-zinc-600'
-          : 'bg-zinc-900 border-zinc-800 hover:bg-zinc-800/60'}
-        ${errors.length > 0 ? 'border-t-red-900/60' : warnings.length > 0 ? 'border-t-amber-900/40' : 'border-t-zinc-800'}`}
-    >
-      {issues.length === 0 ? (
-        <span className="text-[10px] text-emerald-500 flex items-center gap-1">
-          <span>✓</span><span>No issues</span>
-        </span>
-      ) : (
-        <>
-          {errors.length > 0 && (
-            <span className="text-[10px] text-red-400">
-              ✗ {errors.length} error{errors.length !== 1 ? 's' : ''}
-            </span>
-          )}
-          {warnings.length > 0 && (
-            <span className="text-[10px] text-amber-400">
-              ⚠ {warnings.length} warning{warnings.length !== 1 ? 's' : ''}
-            </span>
-          )}
-        </>
-      )}
-      <span className="ml-auto text-[9px] text-zinc-600">{open ? '▼' : '▲'}</span>
-    </button>
+    <div className={`flex items-center h-6 border-t shrink-0 bg-zinc-900 transition-colors
+      ${errors.length > 0 ? 'border-t-red-900/60' : warnings.length > 0 ? 'border-t-amber-900/40' : 'border-t-zinc-800'}`}>
+
+      {/* Validation section — takes up left portion, clickable */}
+      <button
+        onClick={onToggleValidation}
+        title={validationOpen ? 'Hide validation issues' : 'Show validation issues'}
+        className={`flex items-center gap-2 px-3 h-full transition-colors
+          ${validationOpen ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'}`}
+      >
+        {issues.length === 0 ? (
+          <span className="text-[10px] text-emerald-500 flex items-center gap-1">
+            <span>✓</span><span>No issues</span>
+          </span>
+        ) : (
+          <>
+            {errors.length > 0 && (
+              <span className="text-[10px] text-red-400">✗ {errors.length} error{errors.length !== 1 ? 's' : ''}</span>
+            )}
+            {warnings.length > 0 && (
+              <span className="text-[10px] text-amber-400">⚠ {warnings.length} warning{warnings.length !== 1 ? 's' : ''}</span>
+            )}
+          </>
+        )}
+        <span className="text-[9px] text-zinc-700">{validationOpen ? '▼' : '▲'}</span>
+      </button>
+
+      <div className="w-px h-3 bg-zinc-700/60 mx-1 shrink-0" />
+
+      {/* VRAM stats button */}
+      <button
+        onClick={onOpenStats}
+        title="Open memory stats"
+        className="flex items-center gap-1.5 px-2 h-full text-[10px] font-mono text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60 transition-colors"
+      >
+        <span className="text-zinc-600">▣</span>
+        <span>{formatBytes(vram.totalBytes)}</span>
+        <span className="text-zinc-700">VRAM</span>
+      </button>
+
+      <div className="flex-1" />
+
+      {/* Quick pipeline overview */}
+      <span className="text-[9px] font-mono text-zinc-700 pr-3">
+        {pipeline.timelines.length}TL · {Object.keys(pipeline.passes).length}P · {Object.keys(pipeline.steps).length}S · {resources.renderTargets.length}RT
+      </span>
+    </div>
   );
 }
 
@@ -298,6 +325,7 @@ function JsonDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
 export function AppShell() {
   const [showJson,       setShowJson]       = useState(false);
   const [showValidation, setShowValidation] = useState(false);
+  const [showStats,      setShowStats]      = useState(false);
   const [activeExample,  setActiveExample]  = useState<ExampleId>('newrg');
 
   const loadDocument = useStore((s) => s.loadDocument);
@@ -340,11 +368,17 @@ export function AppShell() {
         </div>
       </div>
 
-      {/* Validation status bar + popover */}
+      {/* Status bar + validation popover */}
       <div className="relative shrink-0">
         {showValidation && <ValidationPopover onClose={() => setShowValidation(false)} />}
-        <ValidationStatusBar onToggle={() => setShowValidation((v) => !v)} open={showValidation} />
+        <StatusBar
+          onToggleValidation={() => setShowValidation((v) => !v)} validationOpen={showValidation}
+          onOpenStats={() => setShowStats(true)}
+        />
       </div>
+
+      {/* Stats modal */}
+      {showStats && <StatsModal onClose={() => setShowStats(false)} />}
 
       {/* JSON drawer (overlay) */}
       <JsonDrawer open={showJson} onClose={() => setShowJson(false)} />
