@@ -136,9 +136,30 @@ export const deferredSeed: PipelineDocument = {
   },
 };
 
+// ─── Empty document ───────────────────────────────────────────────────────────
+
+export const emptyDocument: PipelineDocument = {
+  pipeline: {
+    id: 'empty',
+    name: 'New Pipeline',
+    version: 1,
+    timelines: [],
+    passes: {},
+    steps: {},
+  },
+  resources: {
+    renderTargets: [],
+    buffers: [],
+    blendStates: [],
+    shaders: [],
+    inputParameters: [],
+  },
+};
+
 // ─── Example registry ─────────────────────────────────────────────────────────
 
 export const examples = [
+  { id: 'empty',    label: 'Empty',    doc: emptyDocument },
   { id: 'newrg',    label: 'newrg',    doc: seedDocument  },
   { id: 'deferred', label: 'Deferred', doc: deferredSeed  },
 ] as const;

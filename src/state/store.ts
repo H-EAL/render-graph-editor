@@ -65,6 +65,7 @@ function makeDefaultPass(timelineId: TimelineId): Pass {
     conditions: [],
     reads: [],
     writes: [],
+    manualDeps: [],
     steps: [],
     rasterAttachments: { colorAttachments: [], depthAttachment: undefined },
   };
@@ -79,6 +80,13 @@ function makeDefaultTimeline(type: TimelineType = 'graphics'): Timeline {
   };
 }
 
+function resourceOrderFromLibrary(resources: ResourceLibrary): ResourceId[] {
+  return [
+    ...resources.renderTargets.map((r) => r.id),
+    ...resources.buffers.map((b) => b.id),
+  ];
+}
+
 // ─── Store shape ─────────────────────────────────────────────────────────────
 
 export interface AppState {
@@ -90,7 +98,8 @@ export interface AppState {
   selectedPassId: PassId | null;
   selectedStepId: StepId | null;
   selectedResourceId: ResourceId | null;
-  pinnedResourceIds: ResourceId[];
+  /** Display order of RT + Buffer resources in the timeline overlay rows */
+  resourceOrder: ResourceId[];
 
   // ── Timeline actions ──────────────────────────────────────────────────────
   addTimeline: (type?: TimelineType) => void;
@@ -118,9 +127,9 @@ export interface AppState {
   selectPass: (id: PassId | null) => void;
   selectStep: (id: StepId | null) => void;
   selectResource: (id: ResourceId | null) => void;
-  pinResource: (id: ResourceId) => void;
-  unpinResource: (id: ResourceId) => void;
-  setPinnedResources: (ids: ResourceId[]) => void;
+  setResourceOrder: (ids: ResourceId[]) => void;
+  addManualDep: (passId: PassId, depPassId: PassId) => void;
+  removeManualDep: (passId: PassId, depPassId: PassId) => void;
 
   // ── Resource actions ──────────────────────────────────────────────────────
   addRenderTarget: (rt: RenderTarget) => void;
@@ -146,7 +155,6 @@ export interface AppState {
   // ── IO ────────────────────────────────────────────────────────────────────
   loadDocument: (json: string) => void;
   getDocumentJson: () => string;
-
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
@@ -165,7 +173,7 @@ export const useStore = create<AppState>()(
     selectedPassId: firstPassId(seedDocument.pipeline),
     selectedStepId: null,
     selectedResourceId: null,
-    pinnedResourceIds: [],
+    resourceOrder: resourceOrderFromLibrary(seedDocument.resources),
 
     // ── Timelines ─────────────────────────────────────────────────────────
     addTimeline: (type = 'graphics') =>
@@ -180,7 +188,6 @@ export const useStore = create<AppState>()(
       set((s) => {
         const timeline = s.pipeline.timelines.find((tl) => tl.id === id);
         if (!timeline) return {};
-        // Remove all passes in that timeline
         const passes = { ...s.pipeline.passes };
         const steps = { ...s.pipeline.steps };
         for (const pid of timeline.passIds) {
@@ -368,49 +375,98 @@ export const useStore = create<AppState>()(
     selectPass: (id) => set({ selectedPassId: id, selectedStepId: null }),
     selectStep: (id) => set({ selectedStepId: id }),
     selectResource: (id) => set({ selectedResourceId: id }),
-    pinResource: (id) => set((s) => ({
-      pinnedResourceIds: s.pinnedResourceIds.includes(id) ? s.pinnedResourceIds : [...s.pinnedResourceIds, id],
-    })),
-    unpinResource: (id) => set((s) => ({
-      pinnedResourceIds: s.pinnedResourceIds.filter((pid) => pid !== id),
-    })),
-    setPinnedResources: (ids) => set({ pinnedResourceIds: ids }),
+    setResourceOrder: (ids) => set({ resourceOrder: ids }),
+
+    addManualDep: (passId, depPassId) =>
+      set((s) => {
+        const pass = s.pipeline.passes[passId];
+        if (!pass) return {};
+        const existing = pass.manualDeps ?? [];
+        if (existing.includes(depPassId)) return {};
+        return {
+          pipeline: {
+            ...s.pipeline,
+            passes: {
+              ...s.pipeline.passes,
+              [passId]: { ...pass, manualDeps: [...existing, depPassId] },
+            },
+          },
+        };
+      }),
+
+    removeManualDep: (passId, depPassId) =>
+      set((s) => {
+        const pass = s.pipeline.passes[passId];
+        if (!pass) return {};
+        return {
+          pipeline: {
+            ...s.pipeline,
+            passes: {
+              ...s.pipeline.passes,
+              [passId]: { ...pass, manualDeps: (pass.manualDeps ?? []).filter((id) => id !== depPassId) },
+            },
+          },
+        };
+      }),
 
     // ── Resources ─────────────────────────────────────────────────────────
     addRenderTarget: (rt) =>
-      set((s) => ({ resources: { ...s.resources, renderTargets: [...s.resources.renderTargets, rt] } })),
+      set((s) => ({
+        resources: { ...s.resources, renderTargets: [...s.resources.renderTargets, rt] },
+        resourceOrder: [...s.resourceOrder, rt.id],
+      })),
     updateRenderTarget: (id, patch) =>
       set((s) => ({ resources: { ...s.resources, renderTargets: s.resources.renderTargets.map((r) => (r.id === id ? { ...r, ...patch } : r)) } })),
     deleteRenderTarget: (id) =>
-      set((s) => ({ resources: { ...s.resources, renderTargets: s.resources.renderTargets.filter((r) => r.id !== id) } })),
+      set((s) => ({
+        resources: { ...s.resources, renderTargets: s.resources.renderTargets.filter((r) => r.id !== id) },
+        resourceOrder: s.resourceOrder.filter((rid) => rid !== id),
+        selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
+      })),
 
     addBuffer: (b) =>
-      set((s) => ({ resources: { ...s.resources, buffers: [...s.resources.buffers, b] } })),
+      set((s) => ({
+        resources: { ...s.resources, buffers: [...s.resources.buffers, b] },
+        resourceOrder: [...s.resourceOrder, b.id],
+      })),
     updateBuffer: (id, patch) =>
       set((s) => ({ resources: { ...s.resources, buffers: s.resources.buffers.map((r) => (r.id === id ? { ...r, ...patch } : r)) } })),
     deleteBuffer: (id) =>
-      set((s) => ({ resources: { ...s.resources, buffers: s.resources.buffers.filter((r) => r.id !== id) } })),
+      set((s) => ({
+        resources: { ...s.resources, buffers: s.resources.buffers.filter((r) => r.id !== id) },
+        resourceOrder: s.resourceOrder.filter((rid) => rid !== id),
+        selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
+      })),
 
     addBlendState: (bs) =>
       set((s) => ({ resources: { ...s.resources, blendStates: [...s.resources.blendStates, bs] } })),
     updateBlendState: (id, patch) =>
       set((s) => ({ resources: { ...s.resources, blendStates: s.resources.blendStates.map((r) => (r.id === id ? { ...r, ...patch } : r)) } })),
     deleteBlendState: (id) =>
-      set((s) => ({ resources: { ...s.resources, blendStates: s.resources.blendStates.filter((r) => r.id !== id) } })),
+      set((s) => ({
+        resources: { ...s.resources, blendStates: s.resources.blendStates.filter((r) => r.id !== id) },
+        selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
+      })),
 
     addShader: (sh) =>
       set((s) => ({ resources: { ...s.resources, shaders: [...s.resources.shaders, sh] } })),
     updateShader: (id, patch) =>
       set((s) => ({ resources: { ...s.resources, shaders: s.resources.shaders.map((r) => (r.id === id ? { ...r, ...patch } : r)) } })),
     deleteShader: (id) =>
-      set((s) => ({ resources: { ...s.resources, shaders: s.resources.shaders.filter((r) => r.id !== id) } })),
+      set((s) => ({
+        resources: { ...s.resources, shaders: s.resources.shaders.filter((r) => r.id !== id) },
+        selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
+      })),
 
     addInputParameter: (p) =>
       set((s) => ({ resources: { ...s.resources, inputParameters: [...s.resources.inputParameters, p] } })),
     updateInputParameter: (id, patch) =>
       set((s) => ({ resources: { ...s.resources, inputParameters: s.resources.inputParameters.map((r) => (r.id === id ? { ...r, ...patch } : r)) } })),
     deleteInputParameter: (id) =>
-      set((s) => ({ resources: { ...s.resources, inputParameters: s.resources.inputParameters.filter((r) => r.id !== id) } })),
+      set((s) => ({
+        resources: { ...s.resources, inputParameters: s.resources.inputParameters.filter((r) => r.id !== id) },
+        selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
+      })),
 
     // ── IO ────────────────────────────────────────────────────────────────
     loadDocument: (json) => {
@@ -422,7 +478,7 @@ export const useStore = create<AppState>()(
           selectedPassId: firstPassId(doc.pipeline),
           selectedStepId: null,
           selectedResourceId: null,
-          pinnedResourceIds: [],
+          resourceOrder: resourceOrderFromLibrary(doc.resources),
         });
       } catch (e) {
         alert('Failed to parse JSON: ' + (e as Error).message);

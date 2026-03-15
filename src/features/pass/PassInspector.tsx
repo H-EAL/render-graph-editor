@@ -8,7 +8,7 @@ import { TagsInput } from '../../components/ui/TagsInput';
 import { MultiResourceSelect } from '../../components/ui/MultiResourceSelect';
 import { ResourceSelect } from '../../components/ui/ResourceSelect';
 import { deriveDependencies, getPassDependencies } from '../../utils/dependencyGraph';
-import type { Pass, ColorAttachment, DepthAttachment, LoadOp, StoreOp } from '../../types';
+import type { Pass, ColorAttachment, DepthAttachment, LoadOp, StoreOp, PassId } from '../../types';
 
 const KIND_OPTIONS = [
   { value: 'raster', label: 'Raster' },
@@ -277,11 +277,64 @@ export function PassInspector() {
         </div>
       </InspectorSection>
 
-      <InspectorSection title="Dependencies (derived)">
-        {passDeps.dependsOn.length === 0 && passDeps.dependedOnBy.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-zinc-600">No derived dependencies.</div>
-        ) : (
+      <InspectorSection title="Dependencies">
+        {/* ── Manual deps ── */}
+        <div className="px-3 pt-2 pb-1 flex items-center gap-2 border-b border-zinc-800/50">
+          <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex-1">Manual</span>
+        </div>
+        {(pass.manualDeps ?? []).length === 0 && (
+          <div className="px-3 py-1.5 text-[10px] text-zinc-700 italic">No manual dependencies.</div>
+        )}
+        {(pass.manualDeps ?? []).map((depId) => {
+          const depPass = pipeline.passes[depId];
+          const depTl   = depPass ? pipeline.timelines.find((tl) => tl.passIds.includes(depId)) : undefined;
+          return (
+            <div key={depId} className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800/40 bg-amber-950/10">
+              <span className="text-[10px] text-zinc-500 shrink-0">← after</span>
+              <span className="text-xs text-zinc-200 font-medium flex-1 truncate">{depPass?.name ?? depId}</span>
+              {depTl && (
+                <span className="text-[10px] bg-amber-900/40 text-amber-300 border border-amber-700/40 rounded px-1 py-0.5 font-mono shrink-0">
+                  {depTl.name}
+                </span>
+              )}
+              <button
+                onClick={() => useStore.getState().removeManualDep(pass.id, depId)}
+                className="shrink-0 text-zinc-600 hover:text-red-400 text-xs">✕</button>
+            </div>
+          );
+        })}
+        {/* Add manual dep: only show passes from OTHER timelines */}
+        {(() => {
+          const otherPasses = pipeline.timelines
+            .filter((tl) => tl.id !== pass.timelineId)
+            .flatMap((tl) =>
+              tl.passIds
+                .filter((pid) => pid !== pass.id && !(pass.manualDeps ?? []).includes(pid))
+                .map((pid) => ({ pid, passName: pipeline.passes[pid]?.name ?? pid, tlName: tl.name }))
+            );
+          if (otherPasses.length === 0) return null;
+          return (
+            <div className="px-3 py-2 border-b border-zinc-800/50">
+              <select
+                className="w-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                value=""
+                onChange={(e) => { if (e.target.value) useStore.getState().addManualDep(pass.id, e.target.value as PassId); }}
+              >
+                <option value="">+ Add manual dependency…</option>
+                {otherPasses.map(({ pid, passName, tlName }) => (
+                  <option key={pid} value={pid}>{tlName} / {passName}</option>
+                ))}
+              </select>
+            </div>
+          );
+        })()}
+
+        {/* ── Derived deps ── */}
+        {(passDeps.dependsOn.length > 0 || passDeps.dependedOnBy.length > 0) && (
           <>
+            <div className="px-3 pt-2 pb-1 flex items-center gap-2 border-b border-zinc-800/50">
+              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Derived</span>
+            </div>
             {passDeps.dependsOn.map((edge) => {
               const fromPass = pipeline.passes[edge.fromPassId];
               return (
@@ -307,6 +360,9 @@ export function PassInspector() {
               );
             })}
           </>
+        )}
+        {passDeps.dependsOn.length === 0 && passDeps.dependedOnBy.length === 0 && (
+          <div className="px-3 py-1.5 text-[10px] text-zinc-700 italic">No derived dependencies.</div>
         )}
       </InspectorSection>
     </div>

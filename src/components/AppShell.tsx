@@ -5,7 +5,7 @@ import { PipelineTimelineView } from '../features/pipeline/PipelineTimelineView'
 import { StepList } from '../features/step/StepList';
 import { PassInspector } from '../features/pass/PassInspector';
 import { StepInspector } from '../features/step/StepInspector';
-import { ResourceEditor } from '../features/resources/ResourceEditor';
+import { ResourceDrawer } from '../features/resources/ResourceDrawer';
 import { JsonPreviewPanel } from './JsonPreviewPanel';
 import { Badge } from './ui/Badge';
 import { validateDocument } from '../validation';
@@ -152,7 +152,13 @@ function PassCenterPanel() {
 // ─── Right inspector ──────────────────────────────────────────────────────────
 
 function RightInspector() {
-  const selectedStepId = useStore((s) => s.selectedStepId);
+  const selectedStepId     = useStore((s) => s.selectedStepId);
+  const selectedResourceId = useStore((s) => s.selectedResourceId);
+
+  if (selectedResourceId) {
+    return <ResourceDrawer />;
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-3 py-2 border-b border-zinc-700/60 shrink-0">
@@ -301,7 +307,6 @@ export function AppShell() {
   }, [loadDocument]);
 
   const topPanel  = useResizeH(210, 120, 480, 'down');
-  const leftPanel = useResizeW(280, 160, 520, 'right');
   const inspector = useResizeW(320, 200, 520, 'left');
 
   return (
@@ -320,19 +325,6 @@ export function AppShell() {
 
       {/* Main 3-column area */}
       <div className="flex flex-1 overflow-hidden min-h-0">
-
-        {/* Left: Resources */}
-        <div style={{ width: leftPanel.width }}
-          className="flex flex-col shrink-0 overflow-hidden bg-zinc-900 border-r border-zinc-700/60">
-          <div className="px-3 py-2 border-b border-zinc-700/60 shrink-0">
-            <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Resources</span>
-          </div>
-          <div className="flex-1 overflow-hidden">
-            <ResourceEditor />
-          </div>
-        </div>
-        <div onMouseDown={leftPanel.onMouseDown}
-          className="w-1 bg-zinc-800 hover:bg-blue-600/50 cursor-col-resize shrink-0 transition-colors" />
 
         {/* Center: Steps */}
         <div className="flex flex-col flex-1 overflow-hidden min-w-0 bg-zinc-900">

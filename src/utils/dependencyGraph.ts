@@ -11,6 +11,7 @@ export interface DependencyEdge {
   isCrossTimeline: boolean;
   fromTimelineId: TimelineId;
   toTimelineId: TimelineId;
+  isManual?: boolean;
 }
 
 export interface PassDependencies {
@@ -116,6 +117,32 @@ export function deriveDependencies(pipeline: Pipeline): DependencyEdge[] {
         if (w1.timelineId !== w2.timelineId) continue;
         if (w2.idx > w1.idx) addEdge(w1, w2, rid);
         else if (w1.idx > w2.idx) addEdge(w2, w1, rid);
+      }
+    }
+  }
+
+  // Manual dependencies: pass.manualDeps lists passes that this pass comes AFTER
+  for (const pass of Object.values(passes)) {
+    const toPos = passPos.get(pass.id);
+    if (!toPos) continue;
+    for (const depPassId of (pass.manualDeps ?? [])) {
+      const fromPos = passPos.get(depPassId);
+      if (!fromPos) continue;
+      const key = `${depPassId}->${pass.id}`;
+      if (!edgeMap.has(key)) {
+        edgeMap.set(key, {
+          id: key,
+          fromPassId: depPassId,
+          toPassId: pass.id,
+          resourceIds: [],
+          isCrossTimeline: fromPos.timelineId !== toPos.timelineId,
+          fromTimelineId: fromPos.timelineId,
+          toTimelineId: toPos.timelineId,
+          isManual: true,
+        });
+      } else {
+        // If a resource-inferred edge already exists for the same pair, mark it as also manual
+        edgeMap.get(key)!.isManual = true;
       }
     }
   }

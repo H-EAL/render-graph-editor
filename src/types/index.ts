@@ -155,6 +155,7 @@ export interface Pass {
   rasterAttachments?: RasterAttachments;
   reads: ResourceId[];
   writes: ResourceId[];
+  manualDeps?: PassId[];   // explicit "this pass runs after these passes"
   steps: StepId[];
 }
 
