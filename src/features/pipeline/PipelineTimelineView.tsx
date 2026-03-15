@@ -251,6 +251,8 @@ export function PipelineTimelineView() {
   const [dropIdx,       setDropIdx]       = useState<number | null>(null);
   const [hoveredEdge,   setHoveredEdge]   = useState<string | null>(null);
   const [contextMenu,   setContextMenu]   = useState<{ rid: ResourceId; x: number; y: number } | null>(null);
+  const [passCtxMenu,   setPassCtxMenu]   = useState<{ tlId: TimelineId | null; canvasX: number; x: number; y: number } | null>(null);
+  const [nodeCtxMenu,   setNodeCtxMenu]   = useState<{ passId: PassId; x: number; y: number } | null>(null);
 
   // Filter state
   type ResTypeFilter = 'rt' | 'buf' | 'param';
@@ -268,8 +270,10 @@ export function PipelineTimelineView() {
   const sortBtnRef     = useRef<HTMLButtonElement>(null);
   const filterMenuRef  = useRef<HTMLDivElement>(null);
   const filterBtnRef   = useRef<HTMLButtonElement>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
-  const moveRef       = useRef<HTMLDivElement>(null);
+  const contextMenuRef  = useRef<HTMLDivElement>(null);
+  const passCtxMenuRef  = useRef<HTMLDivElement>(null);
+  const nodeCtxMenuRef  = useRef<HTMLDivElement>(null);
+  const moveRef         = useRef<HTMLDivElement>(null);
   const scrollRef     = useRef<HTMLDivElement>(null);
   const labelsRef     = useRef<HTMLDivElement>(null);
 
@@ -316,8 +320,10 @@ export function PipelineTimelineView() {
       if (addResRef.current      && !addResRef.current.contains(t)   && !addResBtnRef.current?.contains(t))        setAddResPos(null);
       if (sortMenuRef.current    && !sortMenuRef.current.contains(t)  && !sortBtnRef.current?.contains(t))         setSortMenuPos(null);
       if (filterMenuRef.current  && !filterMenuRef.current.contains(t) && !filterBtnRef.current?.contains(t))      setFilterPos(null);
-      if (contextMenuRef.current && !contextMenuRef.current.contains(t))                                           setContextMenu(null);
-      if (moveRef.current        && !moveRef.current.contains(t))                                                   setMovePassId(null);
+      if (contextMenuRef.current  && !contextMenuRef.current.contains(t))                                           setContextMenu(null);
+      if (passCtxMenuRef.current  && !passCtxMenuRef.current.contains(t))                                          setPassCtxMenu(null);
+      if (nodeCtxMenuRef.current  && !nodeCtxMenuRef.current.contains(t))                                          setNodeCtxMenu(null);
+      if (moveRef.current         && !moveRef.current.contains(t))                                                  setMovePassId(null);
     };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
@@ -921,7 +927,16 @@ export function PipelineTimelineView() {
         </div>
 
         {/* Scrollable canvas */}
-        <div ref={scrollRef} className="flex-1 overflow-auto">
+        <div ref={scrollRef} className="flex-1 overflow-auto"
+          onContextMenu={(e) => {
+            e.preventDefault();
+            if (pipeline.timelines.length === 0) return;
+            const mx = containerMouseX(e.clientX);
+            const my = containerMouseY(e.clientY);
+            const tlId = timelineFromY(my);
+            setPassCtxMenu({ tlId, canvasX: mx, x: e.clientX, y: e.clientY });
+            setNodeCtxMenu(null);
+          }}>
           <div className="relative" style={{ width: layout.totalW, height: layout.totalH, minWidth: '100%', minHeight: '100%' }}>
 
             {/* SVG: row backgrounds, overlay separators/spans, wires, arrows */}
@@ -1140,7 +1155,13 @@ export function PipelineTimelineView() {
                         ${isReader && !isWriter && !isSelected ? 'ring-1 ring-sky-500/80' : ''}
                       `}
                       style={{ height: NODE_H, cursor: isDragging ? 'grabbing' : 'pointer' }}
-                      onClick={() => { if (!isEditing && !isDragging) selectPass(passId); }}>
+                      onClick={() => { if (!isEditing && !isDragging) selectPass(passId); }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setNodeCtxMenu({ passId, x: e.clientX, y: e.clientY });
+                        setPassCtxMenu(null);
+                      }}>
                       <div
                         className="px-1.5 text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing shrink-0 select-none"
                         style={{ fontSize: 11 }}
@@ -1274,7 +1295,7 @@ export function PipelineTimelineView() {
       {/* Filter panel (fixed overlay) */}
       {filterPos && (
         <div ref={filterMenuRef}
-          className="fixed z-[200] bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl overflow-hidden"
+          className="fixed z-200 bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl overflow-hidden"
           style={{ left: filterPos.x, top: filterPos.y, width: 220 }}>
 
           {/* Name search */}
@@ -1346,7 +1367,7 @@ export function PipelineTimelineView() {
       {/* Sort menu (fixed overlay) */}
       {sortMenuPos && (
         <div ref={sortMenuRef}
-          className="fixed z-[200] bg-zinc-800 border border-zinc-600 rounded shadow-2xl overflow-hidden"
+          className="fixed z-200 bg-zinc-800 border border-zinc-600 rounded shadow-2xl overflow-hidden"
           style={{ left: sortMenuPos.x, top: sortMenuPos.y, minWidth: 144 }}>
           {SORT_OPTS.map((opt) => (
             <button key={opt.value}
@@ -1362,7 +1383,7 @@ export function PipelineTimelineView() {
       {/* Add resource menu (fixed overlay) */}
       {addResPos && (
         <div ref={addResRef}
-          className="fixed z-[200] bg-zinc-800 border border-zinc-600 rounded shadow-2xl overflow-hidden"
+          className="fixed z-200 bg-zinc-800 border border-zinc-600 rounded shadow-2xl overflow-hidden"
           style={{ left: addResPos.x, top: addResPos.y, minWidth: 160 }}>
           <button className="w-full text-left px-3 py-1.5 text-xs text-blue-300 hover:bg-zinc-700 font-mono"
             onClick={createRenderTarget}>▣ Render Target</button>
@@ -1377,7 +1398,7 @@ export function PipelineTimelineView() {
       {contextMenu && (
         <div
           ref={contextMenuRef}
-          className="fixed z-[200] bg-zinc-800 border border-zinc-600 rounded shadow-2xl py-0.5 min-w-36 overflow-hidden"
+          className="fixed z-200 bg-zinc-800 border border-zinc-600 rounded shadow-2xl py-0.5 min-w-36 overflow-hidden"
           style={{ left: contextMenu.x, top: contextMenu.y }}>
           <button
             className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
@@ -1391,6 +1412,96 @@ export function PipelineTimelineView() {
           </button>
         </div>
       )}
+
+      {/* Canvas right-click: add pass */}
+      {passCtxMenu && (
+        <div ref={passCtxMenuRef}
+          className="fixed z-200 bg-zinc-800 border border-zinc-600 rounded shadow-2xl overflow-hidden"
+          style={{ left: passCtxMenu.x, top: passCtxMenu.y, minWidth: 180 }}>
+          <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-zinc-500 border-b border-zinc-700">
+            Add Pass
+          </div>
+          {pipeline.timelines.map((tl) => {
+            const cfg = cfgFor(tl.type);
+            const isTarget = tl.id === passCtxMenu.tlId;
+            return (
+              <button key={tl.id}
+                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-zinc-700 flex items-center gap-2 transition-colors
+                  ${isTarget ? 'bg-zinc-700/40' : ''}`}
+                onClick={() => {
+                  // Compute insertion index based on click X within this timeline
+                  const sorted = tl.passIds
+                    .map((pid) => ({ pid, x: layout.passLayouts.get(pid)?.x ?? 0 }))
+                    .sort((a, b) => a.x - b.x);
+                  let insertAt = sorted.length;
+                  for (let i = 0; i < sorted.length; i++) {
+                    if (passCtxMenu.canvasX < sorted[i].x + NODE_W / 2) { insertAt = i; break; }
+                  }
+                  addPass(tl.id, insertAt);
+                  setPassCtxMenu(null);
+                }}>
+                <span className={`text-[9px] font-mono ${cfg.label}`}>●</span>
+                <span className="text-zinc-200 flex-1">{tl.name}</span>
+                {isTarget && <span className="text-[9px] text-zinc-500 font-mono">here</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Pass node right-click: pass actions */}
+      {nodeCtxMenu && (() => {
+        const pass = pipeline.passes[nodeCtxMenu.passId];
+        if (!pass) return null;
+        const otherTls = pipeline.timelines.filter((tl) => tl.id !== pass.timelineId);
+        return (
+          <div ref={nodeCtxMenuRef}
+            className="fixed z-200 bg-zinc-800 border border-zinc-600 rounded shadow-2xl overflow-hidden"
+            style={{ left: nodeCtxMenu.x, top: nodeCtxMenu.y, minWidth: 168 }}>
+            <div className="px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-zinc-500 border-b border-zinc-700 truncate">
+              {pass.name}
+            </div>
+            <button
+              className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
+              onClick={(e) => { startRenamePass(nodeCtxMenu.passId, pass.name, e); setNodeCtxMenu(null); }}>
+              <span className="text-zinc-500 text-[10px]">✎</span> Rename
+            </button>
+            <button
+              className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
+              onClick={() => { duplicatePass(nodeCtxMenu.passId); setNodeCtxMenu(null); }}>
+              <span className="text-zinc-500 text-[10px]">⧉</span> Duplicate
+            </button>
+            <button
+              className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
+              onClick={() => { updatePass(nodeCtxMenu.passId, { enabled: !pass.enabled }); setNodeCtxMenu(null); }}>
+              <span className="text-zinc-500 text-[10px]">{pass.enabled ? '○' : '●'}</span>
+              {pass.enabled ? 'Disable' : 'Enable'}
+            </button>
+            {otherTls.length > 0 && (
+              <>
+                <div className="border-t border-zinc-700/60 my-0.5" />
+                {otherTls.map((tl) => {
+                  const cfg = cfgFor(tl.type);
+                  return (
+                    <button key={tl.id}
+                      className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 flex items-center gap-2"
+                      onClick={() => { movePassToTimeline(nodeCtxMenu.passId, tl.id); setNodeCtxMenu(null); }}>
+                      <span className={`text-[9px] font-mono ${cfg.label}`}>↔</span>
+                      <span>Move to {tl.name}</span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+            <div className="border-t border-zinc-700/60 my-0.5" />
+            <button
+              className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-zinc-700 flex items-center gap-2"
+              onClick={(e) => { handleDeletePass(nodeCtxMenu.passId, pass.name, e); setNodeCtxMenu(null); }}>
+              <span className="text-[10px]">✕</span> Delete
+            </button>
+          </div>
+        );
+      })()}
 
     </div>
   );

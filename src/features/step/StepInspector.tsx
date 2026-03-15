@@ -43,8 +43,12 @@ function StepTypeEditor({ step }: { step: Step }) {
 }
 
 export function StepInspector() {
-  const { pipeline, resources, selectedStepId, updateStep } = useStore();
+  const { pipeline, resources, selectedStepId, updateStep, selectStep } = useStore();
   const step = selectedStepId ? pipeline.steps[selectedStepId] : null;
+
+  const parentPass = step
+    ? Object.values(pipeline.passes).find((p) => p.steps.includes(step.id)) ?? null
+    : null;
 
   if (!step) {
     return <div className="p-4 text-xs text-zinc-500">Select a step to inspect.</div>;
@@ -59,6 +63,14 @@ export function StepInspector() {
 
   return (
     <div className="flex flex-col overflow-y-auto h-full">
+      {parentPass && (
+        <button
+          onClick={() => selectStep(null)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60 border-b border-zinc-800 transition-colors text-left shrink-0">
+          <span>◂</span>
+          <span className="truncate">{parentPass.name}</span>
+        </button>
+      )}
       <InspectorSection title="Identity">
         <FieldRow label="Name">
           <Input value={step.name} onChange={(e) => u({ name: e.target.value })} />

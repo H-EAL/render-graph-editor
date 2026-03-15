@@ -109,7 +109,7 @@ export interface AppState {
 
   // ── Pass actions ──────────────────────────────────────────────────────────
   setPipelineName: (name: string) => void;
-  addPass: (timelineId: TimelineId) => void;
+  addPass: (timelineId: TimelineId, insertAt?: number) => void;
   deletePass: (id: PassId) => void;
   duplicatePass: (id: PassId) => void;
   reorderPassesInTimeline: (timelineId: TimelineId, orderedIds: PassId[]) => void;
@@ -226,13 +226,17 @@ export const useStore = create<AppState>()(
     // ── Pipeline / Pass ───────────────────────────────────────────────────
     setPipelineName: (name) => set((s) => ({ pipeline: { ...s.pipeline, name } })),
 
-    addPass: (timelineId) =>
+    addPass: (timelineId, insertAt) =>
       set((s) => {
         const pass = makeDefaultPass(timelineId);
         const passes = { ...s.pipeline.passes, [pass.id]: pass };
-        const timelines = s.pipeline.timelines.map((tl) =>
-          tl.id === timelineId ? { ...tl, passIds: [...tl.passIds, pass.id] } : tl
-        );
+        const timelines = s.pipeline.timelines.map((tl) => {
+          if (tl.id !== timelineId) return tl;
+          const ids = [...tl.passIds];
+          if (insertAt !== undefined) ids.splice(insertAt, 0, pass.id);
+          else ids.push(pass.id);
+          return { ...tl, passIds: ids };
+        });
         return { pipeline: { ...s.pipeline, timelines, passes }, selectedPassId: pass.id, selectedStepId: null };
       }),
 

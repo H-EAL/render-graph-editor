@@ -2,37 +2,16 @@ import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useStore } from '../state/store';
 import { examples, type ExampleId } from '../data/seed';
 import { PipelineTimelineView } from '../features/pipeline/PipelineTimelineView';
-import { StepList } from '../features/step/StepList';
 import { PassInspector } from '../features/pass/PassInspector';
 import { StepInspector } from '../features/step/StepInspector';
 import { ResourceDrawer } from '../features/resources/ResourceDrawer';
 import { JsonPreviewPanel } from './JsonPreviewPanel';
-import { Badge } from './ui/Badge';
 import { validateDocument } from '../validation';
 import { StatsModal } from '../features/stats/StatsModal';
 import { computeMemStats, formatBytes } from '../utils/memoryStats';
 
 // ─── Resize hooks ─────────────────────────────────────────────────────────────
 
-function useResizeH(initial: number, min: number, max: number, dir: 'up' | 'down') {
-  const [height, setHeight] = useState(initial);
-  const drag = useRef(false);
-  const y0   = useRef(0);
-  const h0   = useRef(0);
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    drag.current = true; y0.current = e.clientY; h0.current = height;
-    e.preventDefault();
-    const move = (ev: MouseEvent) => {
-      if (!drag.current) return;
-      const d = dir === 'down' ? ev.clientY - y0.current : y0.current - ev.clientY;
-      setHeight(Math.max(min, Math.min(max, h0.current + d)));
-    };
-    const up = () => { drag.current = false; window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-  }, [height, min, max, dir]);
-  return { height, onMouseDown };
-}
 
 function useResizeW(initial: number, min: number, max: number, dir: 'left' | 'right') {
   const [width, setWidth] = useState(initial);
@@ -115,42 +94,6 @@ function PipelineHeader({
   );
 }
 
-// ─── Center panel ─────────────────────────────────────────────────────────────
-
-function PassCenterPanel() {
-  const { pipeline, selectedPassId } = useStore();
-  const pass = selectedPassId ? pipeline.passes[selectedPassId] : null;
-  if (!pass) {
-    return (
-      <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
-        Select a pass from the timeline
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-700/60 bg-zinc-800/20 shrink-0">
-        <Badge value={pass.kind} />
-        <span className="text-sm font-semibold text-zinc-100">{pass.name}</span>
-        {!pass.enabled && <span className="text-[10px] text-zinc-500 italic ml-1">disabled</span>}
-        {pass.conditions.length > 0 && (
-          <div className="flex items-center gap-1 ml-1">
-            <span className="text-[9px] text-amber-600 font-mono shrink-0">if:</span>
-            {pass.conditions.map((c) => (
-              <span key={c} className="text-[10px] bg-amber-900/40 text-amber-300 border border-amber-700/40 rounded px-1.5 py-0.5 font-mono">{c}</span>
-            ))}
-          </div>
-        )}
-        <div className="flex-1" />
-        {pass.notes && <span className="text-[10px] text-zinc-500 truncate max-w-48" title={pass.notes}>{pass.notes}</span>}
-      </div>
-      <div className="flex-1 overflow-hidden">
-        <StepList passId={pass.id} />
-      </div>
-    </div>
-  );
-}
-
 // ─── Right inspector ──────────────────────────────────────────────────────────
 
 function RightInspector() {
@@ -165,7 +108,7 @@ function RightInspector() {
     <div className="flex flex-col h-full">
       <div className="px-3 py-2 border-b border-zinc-700/60 shrink-0">
         <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-          {selectedStepId ? 'Step Inspector' : 'Pass Inspector'}
+          Inspector
         </span>
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -323,10 +266,11 @@ function JsonDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
 // ─── AppShell ─────────────────────────────────────────────────────────────────
 
 export function AppShell() {
-  const [showJson,       setShowJson]       = useState(false);
-  const [showValidation, setShowValidation] = useState(false);
-  const [showStats,      setShowStats]      = useState(false);
-  const [activeExample,  setActiveExample]  = useState<ExampleId>('newrg');
+  const [showJson,        setShowJson]        = useState(false);
+  const [showValidation,  setShowValidation]  = useState(false);
+  const [showStats,       setShowStats]       = useState(false);
+  const [rightCollapsed,  setRightCollapsed]  = useState(false);
+  const [activeExample,   setActiveExample]   = useState<ExampleId>('newrg');
 
   const loadDocument = useStore((s) => s.loadDocument);
   const handleSelectExample = useCallback((id: ExampleId) => {
@@ -334,38 +278,44 @@ export function AppShell() {
     if (ex) { loadDocument(JSON.stringify(ex.doc)); setActiveExample(id); }
   }, [loadDocument]);
 
-  const topPanel  = useResizeH(210, 120, 480, 'down');
-  const inspector = useResizeW(320, 200, 520, 'left');
+  const rightPanel = useResizeW(360, 220, 640, 'left');
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
 
-      {/* Title bar + pipeline name (merged) */}
+      {/* Title bar + pipeline name */}
       <PipelineHeader onToggleJson={() => setShowJson((v) => !v)} jsonOpen={showJson}
         activeExample={activeExample} onSelectExample={handleSelectExample} />
 
-      {/* Timeline view */}
-      <div style={{ height: topPanel.height }} className="shrink-0 overflow-hidden border-b border-zinc-700/60">
-        <PipelineTimelineView />
-      </div>
-      <div onMouseDown={topPanel.onMouseDown}
-        className="h-1 bg-zinc-800 hover:bg-blue-600/50 cursor-row-resize shrink-0 transition-colors" />
-
-      {/* Main 3-column area */}
+      {/* Main area: timeline (left) + right panel */}
       <div className="flex flex-1 overflow-hidden min-h-0">
 
-        {/* Center: Steps */}
-        <div className="flex flex-col flex-1 overflow-hidden min-w-0 bg-zinc-900">
-          <PassCenterPanel />
+        {/* Left: timeline, fills all available space */}
+        <div className="flex-1 overflow-hidden min-w-0">
+          <PipelineTimelineView />
         </div>
 
-        {/* Right: Inspector */}
-        <div onMouseDown={inspector.onMouseDown}
-          className="w-1 bg-zinc-800 hover:bg-blue-600/50 cursor-col-resize shrink-0 transition-colors" />
-        <div style={{ width: inspector.width }}
-          className="flex flex-col shrink-0 overflow-hidden bg-zinc-900 border-l border-zinc-700/60">
-          <RightInspector />
-        </div>
+        {/* Right panel (collapsible) */}
+        {!rightCollapsed && (
+          <>
+            <div onMouseDown={rightPanel.onMouseDown}
+              className="w-1 bg-zinc-800 hover:bg-blue-600/50 cursor-col-resize shrink-0 transition-colors" />
+            <div style={{ width: rightPanel.width }}
+              className="flex flex-col shrink-0 overflow-hidden bg-zinc-900 border-l border-zinc-700/60">
+              <RightInspector />
+            </div>
+          </>
+        )}
+
+        {/* Collapse / expand tab */}
+        <button
+          onClick={() => setRightCollapsed((v) => !v)}
+          title={rightCollapsed ? 'Expand panel' : 'Collapse panel'}
+          className="w-4 shrink-0 bg-zinc-900 border-l border-zinc-800 hover:bg-zinc-800 text-zinc-600 hover:text-zinc-300 transition-colors flex items-center justify-center text-[9px]"
+        >
+          {rightCollapsed ? '◀' : '▶'}
+        </button>
+
       </div>
 
       {/* Status bar + validation popover */}
