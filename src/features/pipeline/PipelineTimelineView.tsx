@@ -283,7 +283,7 @@ export function PipelineTimelineView() {
 
   // Escape clears all selections
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
+    const h = (e: globalThis.KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       selectPass(null);
       selectStep(null);
