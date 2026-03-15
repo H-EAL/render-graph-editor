@@ -74,7 +74,16 @@ function StepRow({ passId, stepId }: StepRowProps) {
       <span className="flex-1 text-sm text-zinc-200 truncate">{step.name}</span>
 
       {step.conditions.length > 0 && (
-        <span className="text-[10px] text-amber-400/70 shrink-0">{step.conditions.length} cond</span>
+        <div className="flex items-center gap-0.5 shrink-0">
+          {step.conditions.slice(0, 2).map((c) => (
+            <span key={c} className="text-[9px] bg-amber-950/60 text-amber-400 border border-amber-800/50 rounded px-1 font-mono leading-4">
+              {c}
+            </span>
+          ))}
+          {step.conditions.length > 2 && (
+            <span className="text-[9px] text-amber-600/70 font-mono">+{step.conditions.length - 2}</span>
+          )}
+        </div>
       )}
 
       <div className="hidden group-hover:flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>

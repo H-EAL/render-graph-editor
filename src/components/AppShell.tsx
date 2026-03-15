@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useStore } from '../state/store';
+import { examples, type ExampleId } from '../data/seed';
 import { PipelineTimelineView } from '../features/pipeline/PipelineTimelineView';
 import { StepList } from '../features/step/StepList';
 import { PassInspector } from '../features/pass/PassInspector';
@@ -53,7 +54,13 @@ function useResizeW(initial: number, min: number, max: number, dir: 'left' | 'ri
 
 // ─── Pipeline header ──────────────────────────────────────────────────────────
 
-function PipelineHeader({ onToggleJson, jsonOpen }: { onToggleJson: () => void; jsonOpen: boolean }) {
+function PipelineHeader({
+  onToggleJson, jsonOpen,
+  activeExample, onSelectExample,
+}: {
+  onToggleJson: () => void; jsonOpen: boolean;
+  activeExample: ExampleId; onSelectExample: (id: ExampleId) => void;
+}) {
   const { pipeline, setPipelineName } = useStore();
   const [editing, setEditing] = useState(false);
   const [name, setName]       = useState(pipeline.name);
@@ -76,6 +83,22 @@ function PipelineHeader({ onToggleJson, jsonOpen }: { onToggleJson: () => void; 
       )}
       <span className="text-[10px] text-zinc-600 font-mono">v{pipeline.version}</span>
       <div className="flex-1" />
+
+      {/* Example switcher */}
+      <div className="flex items-center gap-0.5 bg-zinc-800/60 border border-zinc-700/60 rounded p-0.5">
+        {examples.map((ex) => (
+          <button key={ex.id}
+            onClick={() => onSelectExample(ex.id)}
+            className={`text-[10px] px-2 py-0.5 rounded font-mono transition-colors
+              ${activeExample === ex.id
+                ? 'bg-zinc-600 text-zinc-100'
+                : 'text-zinc-500 hover:text-zinc-300'}`}
+          >
+            {ex.label}
+          </button>
+        ))}
+      </div>
+
       <button
         onClick={onToggleJson}
         title="Toggle JSON viewer"
@@ -109,7 +132,8 @@ function PassCenterPanel() {
         <span className="text-sm font-semibold text-zinc-100">{pass.name}</span>
         {!pass.enabled && <span className="text-[10px] text-zinc-500 italic ml-1">disabled</span>}
         {pass.conditions.length > 0 && (
-          <div className="flex gap-1 ml-1">
+          <div className="flex items-center gap-1 ml-1">
+            <span className="text-[9px] text-amber-600 font-mono shrink-0">if:</span>
             {pass.conditions.map((c) => (
               <span key={c} className="text-[10px] bg-amber-900/40 text-amber-300 border border-amber-700/40 rounded px-1.5 py-0.5 font-mono">{c}</span>
             ))}
@@ -268,6 +292,13 @@ function JsonDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
 export function AppShell() {
   const [showJson,       setShowJson]       = useState(false);
   const [showValidation, setShowValidation] = useState(false);
+  const [activeExample,  setActiveExample]  = useState<ExampleId>('newrg');
+
+  const loadDocument = useStore((s) => s.loadDocument);
+  const handleSelectExample = useCallback((id: ExampleId) => {
+    const ex = examples.find((e) => e.id === id);
+    if (ex) { loadDocument(JSON.stringify(ex.doc)); setActiveExample(id); }
+  }, [loadDocument]);
 
   const topPanel  = useResizeH(210, 120, 480, 'down');
   const leftPanel = useResizeW(280, 160, 520, 'right');
@@ -277,7 +308,8 @@ export function AppShell() {
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
 
       {/* Title bar + pipeline name (merged) */}
-      <PipelineHeader onToggleJson={() => setShowJson((v) => !v)} jsonOpen={showJson} />
+      <PipelineHeader onToggleJson={() => setShowJson((v) => !v)} jsonOpen={showJson}
+        activeExample={activeExample} onSelectExample={handleSelectExample} />
 
       {/* Timeline view */}
       <div style={{ height: topPanel.height }} className="shrink-0 overflow-hidden border-b border-zinc-700/60">

@@ -89,6 +89,8 @@ export interface AppState {
   // Selection
   selectedPassId: PassId | null;
   selectedStepId: StepId | null;
+  selectedResourceId: ResourceId | null;
+  pinnedResourceIds: ResourceId[];
 
   // ── Timeline actions ──────────────────────────────────────────────────────
   addTimeline: (type?: TimelineType) => void;
@@ -115,6 +117,10 @@ export interface AppState {
   // ── Selection ─────────────────────────────────────────────────────────────
   selectPass: (id: PassId | null) => void;
   selectStep: (id: StepId | null) => void;
+  selectResource: (id: ResourceId | null) => void;
+  pinResource: (id: ResourceId) => void;
+  unpinResource: (id: ResourceId) => void;
+  setPinnedResources: (ids: ResourceId[]) => void;
 
   // ── Resource actions ──────────────────────────────────────────────────────
   addRenderTarget: (rt: RenderTarget) => void;
@@ -158,6 +164,8 @@ export const useStore = create<AppState>()(
     resources: seedDocument.resources,
     selectedPassId: firstPassId(seedDocument.pipeline),
     selectedStepId: null,
+    selectedResourceId: null,
+    pinnedResourceIds: [],
 
     // ── Timelines ─────────────────────────────────────────────────────────
     addTimeline: (type = 'graphics') =>
@@ -359,6 +367,14 @@ export const useStore = create<AppState>()(
     // ── Selection ─────────────────────────────────────────────────────────
     selectPass: (id) => set({ selectedPassId: id, selectedStepId: null }),
     selectStep: (id) => set({ selectedStepId: id }),
+    selectResource: (id) => set({ selectedResourceId: id }),
+    pinResource: (id) => set((s) => ({
+      pinnedResourceIds: s.pinnedResourceIds.includes(id) ? s.pinnedResourceIds : [...s.pinnedResourceIds, id],
+    })),
+    unpinResource: (id) => set((s) => ({
+      pinnedResourceIds: s.pinnedResourceIds.filter((pid) => pid !== id),
+    })),
+    setPinnedResources: (ids) => set({ pinnedResourceIds: ids }),
 
     // ── Resources ─────────────────────────────────────────────────────────
     addRenderTarget: (rt) =>
@@ -405,6 +421,8 @@ export const useStore = create<AppState>()(
           resources: doc.resources,
           selectedPassId: firstPassId(doc.pipeline),
           selectedStepId: null,
+          selectedResourceId: null,
+          pinnedResourceIds: [],
         });
       } catch (e) {
         alert('Failed to parse JSON: ' + (e as Error).message);
