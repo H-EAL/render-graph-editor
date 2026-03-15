@@ -134,10 +134,13 @@ function useLayout(pipeline: Pipeline, edges: DependencyEdge[], overlayCount: nu
 
 interface DragState {
   passId: PassId;
-  tlId: TimelineId;
+  sourceTlId: TimelineId;
+  targetTlId: TimelineId;
+  depTargetPassId: PassId | null;  // set when hovering over a different timeline
   nodeX: number;
   offsetX: number;
   mouseX: number;
+  mouseY: number;
 }
 
 // ─── Sort mode ────────────────────────────────────────────────────────────────
@@ -221,7 +224,7 @@ export function PipelineTimelineView() {
     selectPass, selectStep, selectResource, setResourceOrder,
     addPass, deletePass, duplicatePass, updatePass,
     addTimeline, deleteTimeline, updateTimeline,
-    movePassToTimeline, reorderPassesInTimeline,
+    movePassToTimeline, reorderPassesInTimeline, addManualDep,
     addRenderTarget, addBuffer, addInputParameter,
   } = useStore();
 
@@ -249,11 +252,21 @@ export function PipelineTimelineView() {
   const [hoveredEdge,   setHoveredEdge]   = useState<string | null>(null);
   const [contextMenu,   setContextMenu]   = useState<{ rid: ResourceId; x: number; y: number } | null>(null);
 
+  // Filter state
+  type ResTypeFilter = 'rt' | 'buf' | 'param';
+  const [filterText,  setFilterText]  = useState('');
+  const [filterTypes, setFilterTypes] = useState<Set<ResTypeFilter>>(new Set());
+  const [filterDead,  setFilterDead]  = useState(false);
+  const [filterUnused, setFilterUnused] = useState(false);
+  const [filterPos,   setFilterPos]   = useState<{ x: number; y: number } | null>(null);
+
   const addMenuRef     = useRef<HTMLDivElement>(null);
   const addResRef      = useRef<HTMLDivElement>(null);
   const addResBtnRef   = useRef<HTMLButtonElement>(null);
   const sortMenuRef    = useRef<HTMLDivElement>(null);
   const sortBtnRef     = useRef<HTMLButtonElement>(null);
+  const filterMenuRef  = useRef<HTMLDivElement>(null);
+  const filterBtnRef   = useRef<HTMLButtonElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const moveRef       = useRef<HTMLDivElement>(null);
   const scrollRef     = useRef<HTMLDivElement>(null);
@@ -301,6 +314,7 @@ export function PipelineTimelineView() {
       if (addMenuRef.current     && !addMenuRef.current.contains(t))                                               setShowAddMenu(false);
       if (addResRef.current      && !addResRef.current.contains(t)   && !addResBtnRef.current?.contains(t))        setAddResPos(null);
       if (sortMenuRef.current    && !sortMenuRef.current.contains(t)  && !sortBtnRef.current?.contains(t))         setSortMenuPos(null);
+      if (filterMenuRef.current  && !filterMenuRef.current.contains(t) && !filterBtnRef.current?.contains(t))      setFilterPos(null);
       if (contextMenuRef.current && !contextMenuRef.current.contains(t))                                           setContextMenu(null);
       if (moveRef.current        && !moveRef.current.contains(t))                                                   setMovePassId(null);
     };
@@ -370,21 +384,45 @@ export function PipelineTimelineView() {
     });
   }, [overlayRows, sortMode, resourceSpans]);
 
-  // Ordered access maps for rendering (follows displayRows)
-  const overlayAccessMaps = useMemo(
-    () => displayRows.map((rid) => ({ rid, map: allAccessMaps.get(rid) ?? new Map() })),
-    [displayRows, allAccessMaps],
-  );
-
-  // Resources written but never read
+  const usageMap    = useMemo(() => getResourceUsage(pipeline), [pipeline]);
   const deadWriteIds = useMemo(() => {
-    const usageMap = getResourceUsage(pipeline);
     const dead = new Set<string>();
     for (const [rid, usage] of usageMap) {
       if (usage.writers.length > 0 && usage.readers.length === 0) dead.add(rid);
     }
     return dead;
-  }, [pipeline]);
+  }, [usageMap]);
+
+  // ── Filter logic ───────────────────────────────────────────────────────────
+  const hasActiveFilter = filterText !== '' || filterTypes.size > 0 || filterDead || filterUnused;
+
+  const filteredRows = useMemo(() => {
+    if (!hasActiveFilter) return displayRows;
+    const txt = filterText.toLowerCase();
+    return displayRows.filter((rid) => {
+      const rt    = rtMap.get(rid);
+      const buf   = bufMap.get(rid);
+      const param = paramMap.get(rid);
+      const name  = rt?.name ?? buf?.name ?? param?.name ?? rid;
+      if (txt && !name.toLowerCase().includes(txt)) return false;
+      if (filterTypes.size > 0) {
+        if (rt    && !filterTypes.has('rt'))    return false;
+        if (buf   && !filterTypes.has('buf'))   return false;
+        if (param && !filterTypes.has('param')) return false;
+      }
+      if (filterDead   && !deadWriteIds.has(rid)) return false;
+      if (filterUnused) {
+        const u = usageMap.get(rid);
+        if (u && (u.writers.length > 0 || u.readers.length > 0)) return false;
+      }
+      return true;
+    });
+  }, [displayRows, filterText, filterTypes, filterDead, filterUnused, rtMap, bufMap, paramMap, deadWriteIds, usageMap, hasActiveFilter]);
+
+  const filteredAccessMaps = useMemo(
+    () => filteredRows.map((rid) => ({ rid, map: allAccessMaps.get(rid) ?? new Map() })),
+    [filteredRows, allAccessMaps],
+  );
 
   const resolveIds = (ids: string[]) =>
     ids.map((id) => rtNames.get(id) ?? bufNames.get(id) ?? id).join(', ');
@@ -398,9 +436,9 @@ export function PipelineTimelineView() {
   const onResourceDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      const oldIdx = displayRows.indexOf(active.id as ResourceId);
-      const newIdx = displayRows.indexOf(over.id as ResourceId);
-      const reordered = arrayMove(displayRows, oldIdx, newIdx);
+      const oldIdx = filteredRows.indexOf(active.id as ResourceId);
+      const newIdx = filteredRows.indexOf(over.id as ResourceId);
+      const reordered = arrayMove(filteredRows, oldIdx, newIdx);
       setResourceOrder(reordered.filter((id) => validResIds.has(id)));
       setSortMode('manual');
     }
@@ -483,6 +521,20 @@ export function PipelineTimelineView() {
     return clientX - el.getBoundingClientRect().left + el.scrollLeft;
   }, []);
 
+  const containerMouseY = useCallback((clientY: number): number => {
+    const el = scrollRef.current;
+    if (!el) return clientY;
+    return clientY - el.getBoundingClientRect().top + el.scrollTop;
+  }, []);
+
+  const timelineFromY = useCallback((mouseY: number): TimelineId | null => {
+    for (let i = 0; i < pipeline.timelines.length; i++) {
+      const rowY = PAD_T + i * ROW_H;
+      if (mouseY >= rowY && mouseY < rowY + ROW_H) return pipeline.timelines[i].id;
+    }
+    return null;
+  }, [pipeline.timelines]);
+
   const computeDropIndex = useCallback((mouseX: number, draggingId: PassId, tlId: TimelineId): number => {
     const tl = pipeline.timelines.find((t) => t.id === tlId);
     if (!tl) return 0;
@@ -496,34 +548,63 @@ export function PipelineTimelineView() {
     return siblings.length;
   }, [pipeline, layout]);
 
+  // For cross-TL hover: find the rightmost pass whose center is left of the cursor
+  const computeDepTarget = useCallback((mouseX: number, tlId: TimelineId): PassId | null => {
+    const tl = pipeline.timelines.find((t) => t.id === tlId);
+    if (!tl) return null;
+    let best: PassId | null = null;
+    let bestX = -Infinity;
+    for (const pid of tl.passIds) {
+      const pl = layout.passLayouts.get(pid);
+      if (!pl) continue;
+      if (pl.x + NODE_W / 2 < mouseX && pl.x > bestX) {
+        bestX = pl.x;
+        best = pid;
+      }
+    }
+    return best;
+  }, [pipeline, layout]);
+
   const startDrag = useCallback((passId: PassId, tlId: TimelineId, nodeX: number, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     const mx = containerMouseX(e.clientX);
-    setDrag({ passId, tlId, nodeX, offsetX: mx - nodeX, mouseX: mx });
+    const my = containerMouseY(e.clientY);
+    setDrag({ passId, sourceTlId: tlId, targetTlId: tlId, depTargetPassId: null, nodeX, offsetX: mx - nodeX, mouseX: mx, mouseY: my });
     setDropIdx(computeDropIndex(mx, passId, tlId));
-  }, [containerMouseX, computeDropIndex]);
+  }, [containerMouseX, containerMouseY, computeDropIndex]);
 
   useEffect(() => {
     if (!drag) return;
     const onMove = (e: MouseEvent) => {
       const mx = containerMouseX(e.clientX);
-      setDrag((d) => d ? { ...d, mouseX: mx } : null);
-      setDropIdx(computeDropIndex(mx, drag.passId, drag.tlId));
+      const my = containerMouseY(e.clientY);
+      const hitTlId = timelineFromY(my) ?? drag.targetTlId;
+      const isCross = hitTlId !== drag.sourceTlId;
+      setDrag((d) => d ? { ...d, mouseX: mx, mouseY: my, targetTlId: hitTlId,
+        depTargetPassId: isCross ? computeDepTarget(mx, hitTlId) : null } : null);
+      if (isCross) setDropIdx(null);
+      else setDropIdx(computeDropIndex(mx, drag.passId, hitTlId));
     };
     const onUp = () => {
       setDrag((d) => {
         if (!d) return null;
-        const tl = pipeline.timelines.find((t) => t.id === d.tlId);
-        if (tl) {
-          const siblings = tl.passIds
-            .filter((pid) => pid !== d.passId)
-            .map((pid) => ({ pid, x: layout.passLayouts.get(pid)?.x ?? 0 }))
-            .sort((a, b) => a.x - b.x);
-          const idx = computeDropIndex(d.mouseX, d.passId, d.tlId);
-          const newOrder = siblings.map((s) => s.pid);
-          newOrder.splice(idx, 0, d.passId);
-          reorderPassesInTimeline(d.tlId, newOrder);
+        if (d.sourceTlId !== d.targetTlId) {
+          // Cross-TL drop: create manual dependency on the pass to the left
+          if (d.depTargetPassId) addManualDep(d.passId, d.depTargetPassId);
+        } else {
+          // Same-TL drop: reorder
+          const tl = pipeline.timelines.find((t) => t.id === d.sourceTlId);
+          if (tl) {
+            const siblings = tl.passIds
+              .filter((pid) => pid !== d.passId)
+              .map((pid) => ({ pid, x: layout.passLayouts.get(pid)?.x ?? 0 }))
+              .sort((a, b) => a.x - b.x);
+            const idx = computeDropIndex(d.mouseX, d.passId, d.sourceTlId);
+            const newOrder = siblings.map((s) => s.pid);
+            newOrder.splice(idx, 0, d.passId);
+            reorderPassesInTimeline(d.sourceTlId, newOrder);
+          }
         }
         return null;
       });
@@ -532,11 +613,26 @@ export function PipelineTimelineView() {
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-  }, [drag, pipeline, layout, computeDropIndex, reorderPassesInTimeline, containerMouseX]);
+  }, [drag, pipeline, layout, computeDropIndex, computeDepTarget, reorderPassesInTimeline, addManualDep, containerMouseX, containerMouseY, timelineFromY]);
 
-  const dropIndicatorX = useMemo((): { x: number; y: number; h: number } | null => {
-    if (!drag || dropIdx === null) return null;
-    const tl = pipeline.timelines.find((t) => t.id === drag.tlId);
+  const dropIndicator = useMemo((): { x: number; y: number; h: number; color: string } | null => {
+    if (!drag) return null;
+    const isCross = drag.sourceTlId !== drag.targetTlId;
+
+    if (isCross) {
+      // Cross-TL: amber line at the right edge of the dep target pass
+      if (!drag.depTargetPassId) return null;
+      const pl = layout.passLayouts.get(drag.depTargetPassId);
+      if (!pl) return null;
+      const tl = pipeline.timelines.find((t) => t.id === drag.targetTlId);
+      if (!tl) return null;
+      const rowTop = PAD_T + pipeline.timelines.indexOf(tl) * ROW_H;
+      return { x: pl.x + NODE_W + 2, y: rowTop + 4, h: ROW_H - 8, color: '#f59e0b' };
+    }
+
+    // Same-TL: blue gap indicator
+    if (dropIdx === null) return null;
+    const tl = pipeline.timelines.find((t) => t.id === drag.targetTlId);
     if (!tl) return null;
     const tlIdx = pipeline.timelines.indexOf(tl);
     const siblings = tl.passIds
@@ -544,12 +640,12 @@ export function PipelineTimelineView() {
       .map((pid) => layout.passLayouts.get(pid)?.x ?? 0)
       .sort((a, b) => a - b);
     let x: number;
-    if (siblings.length === 0)          x = COL_GAP / 2;
-    else if (dropIdx === 0)             x = siblings[0] - COL_GAP / 2;
+    if (siblings.length === 0)           x = COL_GAP / 2;
+    else if (dropIdx === 0)              x = siblings[0] - COL_GAP / 2;
     else if (dropIdx >= siblings.length) x = siblings[siblings.length - 1] + NODE_W + COL_GAP / 2;
     else x = (siblings[dropIdx - 1] + NODE_W + siblings[dropIdx]) / 2;
     const rowTop = PAD_T + tlIdx * ROW_H;
-    return { x, y: rowTop + 4, h: ROW_H - 8 };
+    return { x, y: rowTop + 4, h: ROW_H - 8, color: '#3b82f6' };
   }, [drag, dropIdx, pipeline, layout]);
 
   const crossCount = allEdges.filter((e) => e.isCrossTimeline).length;
@@ -671,6 +767,23 @@ export function PipelineTimelineView() {
               className="absolute flex items-center gap-1 px-2 border-t border-zinc-700/50"
               style={{ left: 0, top: layout.resourceZoneTop, width: LABEL_W - 4, height: RESOURCE_ZONE_H, background: 'rgba(0,0,0,0.18)' }}>
               <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 flex-1">Resources</span>
+              {/* Filter button */}
+              <button
+                ref={filterBtnRef}
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setFilterPos(filterPos ? null : { x: r.left, y: r.bottom + 4 });
+                }}
+                className={`text-[9px] px-1 py-0.5 rounded border border-dashed transition-colors font-mono leading-none relative
+                  ${hasActiveFilter
+                    ? 'border-sky-500/70 text-sky-400 hover:text-sky-200'
+                    : 'border-zinc-700/60 text-zinc-600 hover:text-zinc-300 hover:border-zinc-500'}`}
+                title="Filter resources">
+                🔍
+                {hasActiveFilter && (
+                  <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-sky-400" />
+                )}
+              </button>
               {/* Sort button */}
               <button
                 ref={sortBtnRef}
@@ -697,8 +810,8 @@ export function PipelineTimelineView() {
             {/* Sortable resource label rows (DnD) */}
             <div style={{ position: 'absolute', top: layout.overlayY, left: 0, width: LABEL_W - 4 }}>
               <DndContext sensors={resSensors} collisionDetection={closestCenter} onDragEnd={onResourceDragEnd}>
-                <SortableContext items={displayRows} strategy={verticalListSortingStrategy}>
-                  {displayRows.map((rid) => {
+                <SortableContext items={filteredRows} strategy={verticalListSortingStrategy}>
+                  {filteredRows.map((rid) => {
                     const rtObj    = rtMap.get(rid);
                     const bufObj   = bufMap.get(rid);
                     const paramObj = paramMap.get(rid);
@@ -725,7 +838,7 @@ export function PipelineTimelineView() {
                         isDead={isDead}
                         isSelected={activeResourceIds.has(rid)}
                         isDimmed={hasResourceFocus && !activeResourceIds.has(rid)}
-                        isDraggable={sortMode === 'manual'}
+                        isDraggable={sortMode === 'manual' && !hasActiveFilter}
                         onSelect={(e) => {
                           if (e.ctrlKey || e.metaKey) {
                             const next = new Set(selectedResourceIds);
@@ -750,9 +863,14 @@ export function PipelineTimelineView() {
                 </SortableContext>
               </DndContext>
 
-              {displayRows.length === 0 && (
+              {filteredRows.length === 0 && displayRows.length === 0 && (
                 <div className="text-[10px] text-zinc-700 italic px-2 py-1">
                   No resources yet. Click + to add one.
+                </div>
+              )}
+              {filteredRows.length === 0 && displayRows.length > 0 && (
+                <div className="text-[10px] text-zinc-600 italic px-2 py-1">
+                  No matches.
                 </div>
               )}
             </div>
@@ -790,13 +908,18 @@ export function PipelineTimelineView() {
 
               {/* Timeline row backgrounds + wires */}
               {pipeline.timelines.map((tl, i) => {
-                const cfg   = cfgFor(tl.type);
-                const rowY  = PAD_T + i * ROW_H;
-                const wireY = rowY + ROW_H / 2;
+                const cfg     = cfgFor(tl.type);
+                const rowY    = PAD_T + i * ROW_H;
+                const wireY   = rowY + ROW_H / 2;
+                const isDepTarget = drag && drag.sourceTlId !== drag.targetTlId && drag.targetTlId === tl.id;
                 return (
                   <g key={tl.id} style={{ pointerEvents: 'none' }}>
                     <rect x={0} y={rowY} width={layout.totalW} height={ROW_H}
-                      fill={i % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent'} />
+                      fill={isDepTarget ? 'rgba(245,158,11,0.08)' : (i % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent')} />
+                    {isDepTarget && (
+                      <rect x={0} y={rowY} width={layout.totalW} height={ROW_H}
+                        fill="none" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 4" opacity={0.4} />
+                    )}
                     <line x1={0} y1={wireY} x2={layout.totalW - 8} y2={wireY}
                       stroke={cfg.wire} strokeWidth={1.5} strokeDasharray="6 10" opacity={0.28} />
                   </g>
@@ -810,10 +933,10 @@ export function PipelineTimelineView() {
                 stroke="#27272a" strokeWidth={1.5} opacity={0.8} style={{ pointerEvents: 'none' }} />
 
               {/* Selected pass column highlight in resource overlay */}
-              {selectedPassId && displayRows.length > 0 && (() => {
+              {selectedPassId && filteredRows.length > 0 && (() => {
                 const pl = layout.passLayouts.get(selectedPassId);
                 if (!pl) return null;
-                const h = displayRows.length * OVERLAY_H;
+                const h = filteredRows.length * OVERLAY_H;
                 return (
                   <g style={{ pointerEvents: 'none' }}>
                     <rect x={pl.x} y={layout.overlayY} width={NODE_W} height={h}
@@ -827,7 +950,7 @@ export function PipelineTimelineView() {
               })()}
 
               {/* Overlay row backgrounds + lifetime spans */}
-              {overlayAccessMaps.map(({ rid, map }, i) => {
+              {filteredAccessMaps.map(({ rid, map }, i) => {
                 const rowY      = layout.overlayY + i * OVERLAY_H;
                 const isSelected = activeResourceIds.has(rid);
                 const xs   = [...layout.passLayouts.values()]
@@ -868,12 +991,12 @@ export function PipelineTimelineView() {
                 );
               })}
 
-              {/* Drop indicator */}
-              {dropIndicatorX && (
+              {/* Drop / dep indicator */}
+              {dropIndicator && (
                 <line
-                  x1={dropIndicatorX.x} y1={dropIndicatorX.y}
-                  x2={dropIndicatorX.x} y2={dropIndicatorX.y + dropIndicatorX.h}
-                  stroke="#3b82f6" strokeWidth={2} strokeDasharray="3 3"
+                  x1={dropIndicator.x} y1={dropIndicator.y}
+                  x2={dropIndicator.x} y2={dropIndicator.y + dropIndicator.h}
+                  stroke={dropIndicator.color} strokeWidth={2} strokeDasharray="3 3"
                   style={{ pointerEvents: 'none' }}
                 />
               )}
@@ -933,12 +1056,13 @@ export function PipelineTimelineView() {
               const cfg        = cfgFor(layout.passTLType.get(passId) ?? 'custom');
               const isSelected = passId === selectedPassId;
               const isEditing  = editPassId === passId;
-              const isDragging = drag?.passId === passId;
-              const otherTls   = pipeline.timelines.filter((tl) => tl.id !== pass.timelineId);
-              const translateX = isDragging ? drag!.mouseX - drag!.offsetX - drag!.nodeX : 0;
-              const isWriter   = writingPassIds.has(passId);
-              const isReader   = readingPassIds.has(passId);
-              const isDimmed   = selectedResourceIds.size > 0 && !isWriter && !isReader;
+              const isDragging   = drag?.passId === passId;
+              const isDepAnchor  = !isDragging && drag?.sourceTlId !== drag?.targetTlId && drag?.depTargetPassId === passId;
+              const otherTls     = pipeline.timelines.filter((tl) => tl.id !== pass.timelineId);
+              const translateX   = isDragging ? drag!.mouseX - drag!.offsetX - drag!.nodeX : 0;
+              const isWriter     = writingPassIds.has(passId);
+              const isReader     = readingPassIds.has(passId);
+              const isDimmed     = selectedResourceIds.size > 0 && !isWriter && !isReader;
 
               return (
                 <div key={passId}
@@ -969,6 +1093,7 @@ export function PipelineTimelineView() {
                         ${isSelected ? `${cfg.nodeHl} shadow-lg` : `${cfg.nodeBg} hover:brightness-125`}
                         ${!pass.enabled ? 'opacity-50' : ''}
                         ${isDragging ? 'shadow-2xl ring-1 ring-blue-400/50' : ''}
+                        ${isDepAnchor ? 'ring-2 ring-amber-400/80 shadow-amber-900/40 shadow-lg' : ''}
                         ${isWriter && !isSelected ? 'ring-1 ring-amber-500/80' : ''}
                         ${isReader && !isWriter && !isSelected ? 'ring-1 ring-sky-500/80' : ''}
                       `}
@@ -1034,7 +1159,7 @@ export function PipelineTimelineView() {
             })}
 
             {/* Overlay R/W/RW badges */}
-            {overlayAccessMaps.map(({ rid, map }, rowIdx) => {
+            {filteredAccessMaps.map(({ rid, map }, rowIdx) => {
               const name     = resolveIds([rid]);
               const isDimmed = hasResourceFocus && !activeResourceIds.has(rid);
               return [...layout.passLayouts.values()].map(({ passId, x }) => {
@@ -1103,6 +1228,77 @@ export function PipelineTimelineView() {
         </div>
 
       </div>
+
+      {/* Filter panel (fixed overlay) */}
+      {filterPos && (
+        <div ref={filterMenuRef}
+          className="fixed z-[200] bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl overflow-hidden"
+          style={{ left: filterPos.x, top: filterPos.y, width: 220 }}>
+
+          {/* Name search */}
+          <div className="px-3 pt-2.5 pb-2 border-b border-zinc-800">
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search by name…"
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-sky-600"
+            />
+          </div>
+
+          {/* Type chips */}
+          <div className="px-3 py-2 border-b border-zinc-800">
+            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-1.5">Type</div>
+            <div className="flex gap-1.5 flex-wrap">
+              {([
+                { key: 'rt',    label: '▣ RT',    cls: 'text-blue-300 border-blue-700/60 bg-blue-950/40' },
+                { key: 'buf',   label: '▤ Buffer', cls: 'text-amber-300 border-amber-700/60 bg-amber-950/40' },
+                { key: 'param', label: '◆ Param',  cls: 'text-zinc-300 border-zinc-600 bg-zinc-800/60' },
+              ] as { key: ResTypeFilter; label: string; cls: string }[]).map(({ key, label, cls }) => {
+                const active = filterTypes.has(key);
+                return (
+                  <button key={key}
+                    onClick={() => {
+                      const next = new Set(filterTypes);
+                      if (active) next.delete(key); else next.add(key);
+                      setFilterTypes(next);
+                    }}
+                    className={`text-[10px] px-2 py-0.5 rounded border font-mono transition-colors
+                      ${active ? cls : 'border-zinc-700/50 text-zinc-600 hover:text-zinc-400 hover:border-zinc-500'}`}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Toggle flags */}
+          <div className="px-3 py-2 flex flex-col gap-1.5">
+            {[
+              { state: filterDead,   set: setFilterDead,   label: '⚠ Dead writes only',  desc: 'Written but never read' },
+              { state: filterUnused, set: setFilterUnused, label: '∅ Unused only',        desc: 'Not referenced by any pass' },
+            ].map(({ state, set, label, desc }) => (
+              <label key={label} className="flex items-center gap-2 cursor-pointer group">
+                <input type="checkbox" checked={state} onChange={(e) => set(e.target.checked)}
+                  className="w-3 h-3 accent-sky-500 shrink-0" />
+                <span className="text-[10px] text-zinc-400 group-hover:text-zinc-200 transition-colors" title={desc}>{label}</span>
+              </label>
+            ))}
+          </div>
+
+          {/* Clear */}
+          {hasActiveFilter && (
+            <div className="px-3 pb-2 pt-0.5 border-t border-zinc-800">
+              <button
+                onClick={() => { setFilterText(''); setFilterTypes(new Set()); setFilterDead(false); setFilterUnused(false); }}
+                className="text-[10px] text-zinc-600 hover:text-sky-400 transition-colors">
+                Clear all filters
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Sort menu (fixed overlay) */}
       {sortMenuPos && (
