@@ -2,6 +2,7 @@
 
 export type PassId = string;
 export type StepId = string;
+export type CommandId = string;
 export type ResourceId = string;
 export type TimelineId = string;
 
@@ -116,8 +117,6 @@ export interface Timeline {
 
 // ─── Pass ─────────────────────────────────────────────────────────────────────
 
-export type PassKind = 'raster' | 'compute' | 'transfer' | 'raytracing';
-
 export type LoadOp = 'load' | 'clear' | 'dontCare';
 export type StoreOp = 'store' | 'dontCare';
 
@@ -147,34 +146,70 @@ export interface RasterAttachments {
 export interface Pass {
   id: PassId;
   name: string;
-  kind: PassKind;
   timelineId: TimelineId;
   enabled: boolean;
   conditions: string[];
   notes?: string;
-  rasterAttachments?: RasterAttachments;
   reads: ResourceId[];
   writes: ResourceId[];
-  manualDeps?: PassId[];   // explicit "this pass runs after these passes"
+  manualDeps?: PassId[];
   steps: StepId[];
 }
+
+// ─── Raster Commands ──────────────────────────────────────────────────────────
+
+export type DynamicStateType = 'viewport' | 'scissor' | 'depthBias' | 'stencilRef';
+
+export interface SetDynamicStateCommand {
+  id: CommandId;
+  type: 'setDynamicState';
+  name: string;
+  stateType: DynamicStateType;
+  // viewport / scissor rect
+  x?: number;
+  y?: number;
+  width?: number | string;
+  height?: number | string;
+  // viewport depth range
+  minDepth?: number;
+  maxDepth?: number;
+  // depthBias
+  constantFactor?: number;
+  clamp?: number;
+  slopeFactor?: number;
+  // stencilRef
+  reference?: number;
+}
+
+export interface DrawBatchCommand {
+  id: CommandId;
+  type: 'drawBatch';
+  name: string;
+  shader: ResourceId;
+  blendState?: ResourceId;
+  depthTest: boolean;
+  depthWrite: boolean;
+  cullMode: 'none' | 'front' | 'back';
+  withMaterials?: boolean;
+  materialSet?: string;
+  batchTag?: string;
+}
+
+export type RasterCommand = SetDynamicStateCommand | DrawBatchCommand;
+export type RasterCommandType = RasterCommand['type'];
 
 // ─── Steps ────────────────────────────────────────────────────────────────────
 
 export type StepType =
-  | 'drawBatch'
-  | 'drawBatchWithMaterials'
+  | 'raster'
   | 'dispatchCompute'
   | 'dispatchRayTracing'
-  | 'drawFullscreen'
   | 'copyImage'
   | 'blitImage'
   | 'resolveImage'
   | 'clearImages'
   | 'fillBuffer'
-  | 'generateMipChain'
-  | 'viewport'
-  | 'drawDebugLines';
+  | 'generateMipChain';
 
 export interface StepBase {
   id: StepId;
@@ -184,25 +219,10 @@ export interface StepBase {
   conditions: string[];
 }
 
-export interface DrawBatchStep extends StepBase {
-  type: 'drawBatch';
-  shader: ResourceId;
-  blendState?: ResourceId;
-  depthTest: boolean;
-  depthWrite: boolean;
-  cullMode: 'none' | 'front' | 'back';
-  batchTag?: string;
-}
-
-export interface DrawBatchWithMaterialsStep extends StepBase {
-  type: 'drawBatchWithMaterials';
-  shader: ResourceId;
-  blendState?: ResourceId;
-  depthTest: boolean;
-  depthWrite: boolean;
-  cullMode: 'none' | 'front' | 'back';
-  batchTag?: string;
-  materialSet?: string;
+export interface RasterStep extends StepBase {
+  type: 'raster';
+  attachments: RasterAttachments;
+  commands: RasterCommand[];
 }
 
 export interface DispatchComputeStep extends StepBase {
@@ -220,12 +240,6 @@ export interface DispatchRayTracingStep extends StepBase {
   closestHitShader?: ResourceId;
   width: number | string;
   height: number | string;
-}
-
-export interface DrawFullscreenStep extends StepBase {
-  type: 'drawFullscreen';
-  shader: ResourceId;
-  blendState?: ResourceId;
 }
 
 export interface CopyImageStep extends StepBase {
@@ -269,36 +283,16 @@ export interface GenerateMipChainStep extends StepBase {
   filter: 'nearest' | 'linear';
 }
 
-export interface ViewportStep extends StepBase {
-  type: 'viewport';
-  x: number;
-  y: number;
-  width: number | string;
-  height: number | string;
-  minDepth: number;
-  maxDepth: number;
-}
-
-export interface DrawDebugLinesStep extends StepBase {
-  type: 'drawDebugLines';
-  shader?: ResourceId;
-  lineWidth: number;
-}
-
 export type Step =
-  | DrawBatchStep
-  | DrawBatchWithMaterialsStep
+  | RasterStep
   | DispatchComputeStep
   | DispatchRayTracingStep
-  | DrawFullscreenStep
   | CopyImageStep
   | BlitImageStep
   | ResolveImageStep
   | ClearImagesStep
   | FillBufferStep
-  | GenerateMipChainStep
-  | ViewportStep
-  | DrawDebugLinesStep;
+  | GenerateMipChainStep;
 
 // ─── Pipeline ─────────────────────────────────────────────────────────────────
 
@@ -330,4 +324,3 @@ export interface ValidationIssue {
 }
 
 // ─── UI State ─────────────────────────────────────────────────────────────────
-

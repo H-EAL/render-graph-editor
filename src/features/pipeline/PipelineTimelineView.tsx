@@ -33,36 +33,28 @@ const STEPS_STRIP_H   = 16;  // step chips row below pass node
 // ─── Step chip config ─────────────────────────────────────────────────────────
 
 const STEP_ABBR: Record<string, string> = {
-  drawBatch:              'DB',
-  drawBatchWithMaterials: 'DBM',
-  dispatchCompute:        'DC',
-  dispatchRayTracing:     'DRT',
-  drawFullscreen:         'FS',
-  copyImage:              'CP',
-  blitImage:              'BL',
-  resolveImage:           'RS',
-  clearImages:            'CLR',
-  fillBuffer:             'FB',
-  generateMipChain:       'MIP',
-  viewport:               'VP',
-  drawDebugLines:         'DBG',
+  raster:             'RST',
+  dispatchCompute:    'DC',
+  dispatchRayTracing: 'DRT',
+  copyImage:          'CP',
+  blitImage:          'BL',
+  resolveImage:       'RS',
+  clearImages:        'CLR',
+  fillBuffer:         'FB',
+  generateMipChain:   'MIP',
 };
 
-// Mirrors the timeline type colour pattern: draw→blue, compute→green, rt→violet, transfer→orange, misc→zinc
+// Mirrors the timeline type colour pattern: raster→blue, compute→emerald, rt→violet, transfer→orange, buffer→amber, misc→zinc
 const STEP_CHIP_CLS: Record<string, string> = {
-  drawBatch:              'bg-blue-900/70 text-blue-300 border-blue-800/50',
-  drawBatchWithMaterials: 'bg-blue-900/60 text-blue-400 border-blue-800/40',
-  drawFullscreen:         'bg-blue-900/50 text-blue-400 border-blue-800/40',
-  drawDebugLines:         'bg-blue-900/40 text-blue-500 border-blue-800/30',
-  dispatchCompute:        'bg-emerald-900/70 text-emerald-300 border-emerald-800/50',
-  dispatchRayTracing:     'bg-violet-900/70 text-violet-300 border-violet-800/50',
-  copyImage:              'bg-orange-900/70 text-orange-300 border-orange-800/50',
-  blitImage:              'bg-orange-900/60 text-orange-400 border-orange-800/40',
-  resolveImage:           'bg-orange-900/60 text-orange-400 border-orange-800/40',
-  clearImages:            'bg-red-900/60 text-red-400 border-red-800/40',
-  fillBuffer:             'bg-amber-900/60 text-amber-400 border-amber-800/40',
-  generateMipChain:       'bg-orange-900/50 text-orange-500 border-orange-800/30',
-  viewport:               'bg-zinc-700/60 text-zinc-400 border-zinc-600/40',
+  raster:             'bg-blue-900/70 text-blue-300 border-blue-800/50',
+  dispatchCompute:    'bg-emerald-900/70 text-emerald-300 border-emerald-800/50',
+  dispatchRayTracing: 'bg-violet-900/70 text-violet-300 border-violet-800/50',
+  copyImage:          'bg-orange-900/70 text-orange-300 border-orange-800/50',
+  blitImage:          'bg-orange-900/60 text-orange-400 border-orange-800/40',
+  resolveImage:       'bg-orange-900/60 text-orange-400 border-orange-800/40',
+  clearImages:        'bg-red-900/60 text-red-400 border-red-800/40',
+  fillBuffer:         'bg-amber-900/60 text-amber-400 border-amber-800/40',
+  generateMipChain:   'bg-orange-900/50 text-orange-500 border-orange-800/30',
 };
 
 // ─── Timeline colour config ────────────────────────────────────────────────────
@@ -281,8 +273,7 @@ export function PipelineTimelineView() {
   const [editPassName,  setEditPassName]  = useState('');
   const [editTlId,      setEditTlId]      = useState<TimelineId | null>(null);
   const [editTlName,    setEditTlName]    = useState('');
-  const [movePassId,    setMovePassId]    = useState<PassId | null>(null);
-  const [movePos,       setMovePos]       = useState({ x: 0, y: 0 });
+
   const [drag,          setDrag]          = useState<DragState | null>(null);
   const [dropIdx,       setDropIdx]       = useState<number | null>(null);
   const [hoveredEdge,   setHoveredEdge]   = useState<string | null>(null);
@@ -309,7 +300,7 @@ export function PipelineTimelineView() {
   const contextMenuRef  = useRef<HTMLDivElement>(null);
   const passCtxMenuRef  = useRef<HTMLDivElement>(null);
   const nodeCtxMenuRef  = useRef<HTMLDivElement>(null);
-  const moveRef         = useRef<HTMLDivElement>(null);
+
   const scrollRef     = useRef<HTMLDivElement>(null);
   const labelsRef     = useRef<HTMLDivElement>(null);
 
@@ -359,7 +350,7 @@ export function PipelineTimelineView() {
       if (contextMenuRef.current  && !contextMenuRef.current.contains(t))                                           setContextMenu(null);
       if (passCtxMenuRef.current  && !passCtxMenuRef.current.contains(t))                                          setPassCtxMenu(null);
       if (nodeCtxMenuRef.current  && !nodeCtxMenuRef.current.contains(t))                                          setNodeCtxMenu(null);
-      if (moveRef.current         && !moveRef.current.contains(t))                                                  setMovePassId(null);
+
     };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
@@ -574,11 +565,6 @@ export function PipelineTimelineView() {
   const handleDeleteTl = (tlId: TimelineId, name: string, passCount: number) => {
     if (passCount > 0 && !window.confirm(`Delete timeline "${name}" and its ${passCount} pass(es)?`)) return;
     deleteTimeline(tlId);
-  };
-
-  // ── Move dropdown ──────────────────────────────────────────────────────────
-  const openMove = (passId: PassId, x: number, y: number, e: React.MouseEvent) => {
-    e.stopPropagation(); setMovePassId(passId); setMovePos({ x, y });
   };
 
   // ── Pass drag-to-reorder ───────────────────────────────────────────────────
@@ -1151,7 +1137,6 @@ export function PipelineTimelineView() {
               const isEditing  = editPassId === passId;
               const isDragging   = drag?.passId === passId;
               const isDepAnchor  = !isDragging && drag?.sourceTlId !== drag?.targetTlId && drag?.depTargetPassId === passId;
-              const otherTls     = pipeline.timelines.filter((tl) => tl.id !== pass.timelineId);
               const translateX   = isDragging ? drag!.mouseX - drag!.offsetX - drag!.nodeX : 0;
               const isWriter     = writingPassIds.has(passId);
               const isReader     = readingPassIds.has(passId);
@@ -1304,25 +1289,6 @@ export function PipelineTimelineView() {
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                 <span className="text-xs text-zinc-600">No timelines yet.</span>
                 <span className="text-[10px] text-zinc-700">Click "+ Timeline" in the toolbar to get started.</span>
-              </div>
-            )}
-
-            {/* Move-to-timeline dropdown */}
-            {movePassId && (
-              <div ref={moveRef}
-                className="absolute z-50 bg-zinc-800 border border-zinc-600 rounded shadow-xl w-44 overflow-hidden"
-                style={{ left: movePos.x, top: movePos.y }}
-                onClick={(e) => e.stopPropagation()}>
-                <div className="px-2 py-1 text-[10px] text-zinc-500 border-b border-zinc-700">Move to timeline</div>
-                {pipeline.timelines
-                  .filter((tl) => tl.id !== pipeline.passes[movePassId]?.timelineId)
-                  .map((tl) => (
-                    <button key={tl.id}
-                      className="w-full text-left px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700"
-                      onClick={() => { movePassToTimeline(movePassId, tl.id); setMovePassId(null); }}>
-                      {tl.name}
-                    </button>
-                  ))}
               </div>
             )}
 

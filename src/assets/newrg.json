@@ -30,45 +30,12 @@
       "pass-info": {
         "id": "pass-info",
         "name": "INFO",
-        "kind": "raster",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [
           "opaque"
         ],
         "notes": "Initial info/depth pass from the authored INFO render pass.",
-        "rasterAttachments": {
-          "colorAttachments": [
-            {
-              "target": "rt-info-vs-position",
-              "loadOp": "clear",
-              "storeOp": "store",
-              "clearValue": [
-                0,
-                0,
-                0,
-                0
-              ]
-            },
-            {
-              "target": "rt-info-vs-normal",
-              "loadOp": "clear",
-              "storeOp": "store",
-              "clearValue": [
-                0,
-                0,
-                0,
-                0
-              ]
-            }
-          ],
-          "depthAttachment": {
-            "target": "rt-info-depth",
-            "loadOp": "clear",
-            "storeOp": "store",
-            "clearValue": 1
-          }
-        },
         "reads": [],
         "writes": [
           "rt-info-vs-position",
@@ -76,59 +43,18 @@
           "rt-info-depth"
         ],
         "steps": [
-          "step-info-viewport",
-          "step-info-static-single-prepass",
-          "step-info-static-double-prepass",
-          "step-info-skinned-single-prepass",
-          "step-info-skinned-double-prepass",
-          "step-info-static-single",
-          "step-info-static-double",
-          "step-info-skinned-single",
-          "step-info-skinned-double"
+          "pass-info-raster"
         ]
       },
       "pass-picking": {
         "id": "pass-picking",
         "name": "PICKING Pass",
-        "kind": "raster",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [
           "transparent"
         ],
         "notes": "Picking / world-space info pass from the authored PICKING Pass render pass.",
-        "rasterAttachments": {
-          "colorAttachments": [
-            {
-              "target": "rt-ws-position",
-              "loadOp": "clear",
-              "storeOp": "store",
-              "clearValue": [
-                0,
-                0,
-                0,
-                0
-              ]
-            },
-            {
-              "target": "rt-ws-normal",
-              "loadOp": "clear",
-              "storeOp": "store",
-              "clearValue": [
-                0,
-                0,
-                0,
-                0
-              ]
-            }
-          ],
-          "depthAttachment": {
-            "target": "rt-info-depth",
-            "loadOp": "load",
-            "storeOp": "store",
-            "clearValue": 1
-          }
-        },
         "reads": [
           "rt-info-depth"
         ],
@@ -137,21 +63,12 @@
           "rt-ws-normal"
         ],
         "steps": [
-          "step-picking-viewport",
-          "step-picking-single-prepass",
-          "step-picking-double-prepass",
-          "step-picking-skinned-single-prepass",
-          "step-picking-skinned-double-prepass",
-          "step-picking-single",
-          "step-picking-double",
-          "step-picking-skinned-single",
-          "step-picking-skinned-double"
+          "pass-picking-raster"
         ]
       },
       "pass-background": {
         "id": "pass-background",
         "name": "Background & Environment",
-        "kind": "compute",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [],
@@ -180,7 +97,6 @@
       "pass-ao": {
         "id": "pass-ao",
         "name": "Ambient Occlusion",
-        "kind": "compute",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [],
@@ -204,15 +120,12 @@
           "step-hbao-upsample",
           "step-hbao-bilateral-half",
           "step-hbao-blit-half",
-          "step-hbao-full",
-          "step-hbao-bilateral-full",
-          "step-hbao-upsample-full"
+          "step-hbao-full"
         ]
       },
       "pass-light-clustering": {
         "id": "pass-light-clustering",
         "name": "Light Clustering",
-        "kind": "compute",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [
@@ -235,7 +148,6 @@
       "pass-decals": {
         "id": "pass-decals",
         "name": "Decals",
-        "kind": "compute",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [],
@@ -257,34 +169,12 @@
       "pass-selection-outlines": {
         "id": "pass-selection-outlines",
         "name": "Selection Outlines",
-        "kind": "raster",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [
           "selectionOutlines"
         ],
         "notes": "Collapsed both selection buffer variants plus final AA compose.",
-        "rasterAttachments": {
-          "colorAttachments": [
-            {
-              "target": "rt-selection",
-              "loadOp": "clear",
-              "storeOp": "store",
-              "clearValue": [
-                0,
-                0,
-                0,
-                0
-              ]
-            }
-          ],
-          "depthAttachment": {
-            "target": "rt-selection-depth",
-            "loadOp": "clear",
-            "storeOp": "store",
-            "clearValue": 1
-          }
-        },
         "reads": [],
         "writes": [
           "rt-selection",
@@ -292,68 +182,19 @@
           "rt-resolved-color"
         ],
         "steps": [
-          "step-selection-viewport-single",
-          "step-selection-draw-static-single-a",
-          "step-selection-draw-static-single-b",
-          "step-selection-viewport-all",
-          "step-selection-draw-static-all-a",
-          "step-selection-draw-static-all-b",
+          "pass-selection-outlines-raster",
           "step-compose-selection-aa"
         ]
       },
       "pass-main-opaque": {
         "id": "pass-main-opaque",
         "name": "Main Opaque",
-        "kind": "raster",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [
           "opaque"
         ],
         "notes": "Collapsed the two duplicate MAIN OPAQUE MSAA passes (reflectEnvironmentSetting on/off branches) into one representative pass.",
-        "rasterAttachments": {
-          "colorAttachments": [
-            {
-              "target": "rt-color-msaa",
-              "loadOp": "clear",
-              "storeOp": "store",
-              "clearValue": [
-                -1,
-                0,
-                0,
-                0
-              ]
-            },
-            {
-              "target": "rt-specular-msaa",
-              "loadOp": "clear",
-              "storeOp": "store",
-              "clearValue": [
-                0,
-                0,
-                0,
-                0
-              ]
-            },
-            {
-              "target": "rt-vs-normals-msaa",
-              "loadOp": "clear",
-              "storeOp": "store",
-              "clearValue": [
-                0,
-                0,
-                0,
-                0
-              ]
-            }
-          ],
-          "depthAttachment": {
-            "target": "rt-depth-msaa",
-            "loadOp": "clear",
-            "storeOp": "store",
-            "clearValue": 1
-          }
-        },
         "reads": [
           "rt-resolved-color"
         ],
@@ -367,57 +208,16 @@
           "rt-info-vs-normal"
         ],
         "steps": [
-          "step-main-opaque-viewport",
-          "step-main-opaque-single-prepass",
-          "step-main-opaque-double-prepass",
-          "step-main-opaque-skinned-single-prepass",
-          "step-main-opaque-skinned-double-prepass",
-          "step-main-copy-background",
-          "step-main-opaque-single-materials",
-          "step-main-opaque-double-materials",
-          "step-main-debug"
+          "pass-main-opaque-raster"
         ]
       },
       "pass-transparent": {
         "id": "pass-transparent",
         "name": "Transparent",
-        "kind": "raster",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [],
         "notes": "Collapsed stochastic and regular transparent branches plus final transparent compose.",
-        "rasterAttachments": {
-          "colorAttachments": [
-            {
-              "target": "rt-transparent-accum",
-              "loadOp": "clear",
-              "storeOp": "store",
-              "clearValue": [
-                0,
-                0,
-                0,
-                0
-              ]
-            },
-            {
-              "target": "rt-transparent-reveal",
-              "loadOp": "clear",
-              "storeOp": "store",
-              "clearValue": [
-                1,
-                1,
-                1,
-                1
-              ]
-            }
-          ],
-          "depthAttachment": {
-            "target": "rt-depth-msaa",
-            "loadOp": "load",
-            "storeOp": "store",
-            "clearValue": 1
-          }
-        },
         "reads": [
           "rt-depth-msaa",
           "rt-depth-backup"
@@ -436,21 +236,13 @@
           "step-transparent-ground-plane",
           "step-voxel-compute",
           "step-apply-fog",
-          "step-transparent-alpha-accum-viewport",
-          "step-transparent-alpha-accum-draw",
-          "step-transparent-atoc-viewport",
-          "step-transparent-atoc-draw",
-          "step-transparent-stochastic-color-viewport",
-          "step-transparent-stochastic-color-draw",
-          "step-transparent-regular-viewport",
-          "step-transparent-regular-draw",
+          "pass-transparent-raster",
           "step-compose-transparent"
         ]
       },
       "pass-reflections-aa": {
         "id": "pass-reflections-aa",
         "name": "Reflections & AA",
-        "kind": "compute",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [],
@@ -495,7 +287,6 @@
       "pass-volumetric-dof-bloom-grade": {
         "id": "pass-volumetric-dof-bloom-grade",
         "name": "Volumetric, DoF, Bloom & Color Grading",
-        "kind": "compute",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [],
@@ -557,7 +348,6 @@
       "pass-point-clouds": {
         "id": "pass-point-clouds",
         "name": "Point Clouds",
-        "kind": "compute",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [
@@ -582,41 +372,23 @@
       "pass-grid": {
         "id": "pass-grid",
         "name": "Grid",
-        "kind": "raster",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [
           "grid"
         ],
         "notes": "The authored grid pass.",
-        "rasterAttachments": {
-          "colorAttachments": [
-            {
-              "target": "rt-resolved-color",
-              "loadOp": "load",
-              "storeOp": "store",
-              "clearValue": [
-                0,
-                0,
-                0,
-                0
-              ]
-            }
-          ]
-        },
         "reads": [],
         "writes": [
           "rt-resolved-color"
         ],
         "steps": [
-          "step-grid-viewport",
-          "step-grid-fullscreen"
+          "pass-grid-raster"
         ]
       },
       "pass-output": {
         "id": "pass-output",
         "name": "Final Output",
-        "kind": "compute",
         "timelineId": "tl-graphics",
         "enabled": true,
         "conditions": [],
@@ -637,329 +409,273 @@
       }
     },
     "steps": {
-      "step-info-viewport": {
-        "id": "step-info-viewport",
-        "type": "viewport",
-        "name": "Viewport",
+      "pass-info-raster": {
+        "id": "pass-info-raster",
+        "type": "raster",
+        "name": "INFO",
         "reads": [],
         "writes": [],
-        "conditions": [
-          "opaque"
-        ],
-        "x": 0,
-        "y": 0,
-        "width": "viewport.width",
-        "height": "viewport.height",
-        "minDepth": 0,
-        "maxDepth": 1
+        "conditions": [],
+        "attachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-info-vs-position",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "target": "rt-info-vs-normal",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-info-depth",
+            "loadOp": "clear",
+            "storeOp": "store",
+            "clearValue": 1
+          }
+        },
+        "commands": [
+          {
+            "id": "cmd-step-info-viewport",
+            "name": "Viewport",
+            "type": "setDynamicState",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0,
+            "maxDepth": 1
+          },
+          {
+            "id": "cmd-step-info-static-single-prepass",
+            "name": "Static Single Sided pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-info-static-double-prepass",
+            "name": "Static Double Sided pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-info-skinned-single-prepass",
+            "name": "Skinned Single Sided pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-info-skinned-double-prepass",
+            "name": "Skinned Double Sided pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-info-static-single",
+            "name": "Static Single Sided",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-info-static-double",
+            "name": "Static Double Sided",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-info-skinned-single",
+            "name": "Skinned Single Sided",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-info-skinned-double",
+            "name": "Skinned Double Sided",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          }
+        ]
       },
-      "step-info-static-single-prepass": {
-        "id": "step-info-static-single-prepass",
-        "type": "drawBatch",
-        "name": "Static Single Sided pre-pass",
-        "reads": [],
-        "writes": [
-          "rt-info-vs-position",
-          "rt-info-vs-normal",
-          "rt-info-depth"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-info-static-double-prepass": {
-        "id": "step-info-static-double-prepass",
-        "type": "drawBatch",
-        "name": "Static Double Sided pre-pass",
-        "reads": [],
-        "writes": [
-          "rt-info-vs-position",
-          "rt-info-vs-normal",
-          "rt-info-depth"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-info-skinned-single-prepass": {
-        "id": "step-info-skinned-single-prepass",
-        "type": "drawBatch",
-        "name": "Skinned Single Sided pre-pass",
-        "reads": [],
-        "writes": [
-          "rt-info-vs-position",
-          "rt-info-vs-normal",
-          "rt-info-depth"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-info-skinned-double-prepass": {
-        "id": "step-info-skinned-double-prepass",
-        "type": "drawBatch",
-        "name": "Skinned Double Sided pre-pass",
-        "reads": [],
-        "writes": [
-          "rt-info-vs-position",
-          "rt-info-vs-normal",
-          "rt-info-depth"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-info-static-single": {
-        "id": "step-info-static-single",
-        "type": "drawBatch",
-        "name": "Static Single Sided",
-        "reads": [],
-        "writes": [
-          "rt-info-vs-position",
-          "rt-info-vs-normal"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-info-static-double": {
-        "id": "step-info-static-double",
-        "type": "drawBatch",
-        "name": "Static Double Sided",
-        "reads": [],
-        "writes": [
-          "rt-info-vs-position",
-          "rt-info-vs-normal"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-info-skinned-single": {
-        "id": "step-info-skinned-single",
-        "type": "drawBatch",
-        "name": "Skinned Single Sided",
-        "reads": [],
-        "writes": [
-          "rt-info-vs-position",
-          "rt-info-vs-normal"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-info-skinned-double": {
-        "id": "step-info-skinned-double",
-        "type": "drawBatch",
-        "name": "Skinned Double Sided",
-        "reads": [],
-        "writes": [
-          "rt-info-vs-position",
-          "rt-info-vs-normal"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-picking-viewport": {
-        "id": "step-picking-viewport",
-        "type": "viewport",
-        "name": "picking viewport node",
+      "pass-picking-raster": {
+        "id": "pass-picking-raster",
+        "type": "raster",
+        "name": "PICKING Pass",
         "reads": [],
         "writes": [],
-        "conditions": [
-          "transparent"
-        ],
-        "x": 0,
-        "y": 0,
-        "width": "viewport.width",
-        "height": "viewport.height",
-        "minDepth": 0,
-        "maxDepth": 1
-      },
-      "step-picking-single-prepass": {
-        "id": "step-picking-single-prepass",
-        "type": "drawBatch",
-        "name": "picking single sided all static draw pre-pass",
-        "reads": [
-          "rt-info-depth"
-        ],
-        "writes": [
-          "rt-ws-position",
-          "rt-ws-normal"
-        ],
-        "conditions": [
-          "transparent"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-picking-double-prepass": {
-        "id": "step-picking-double-prepass",
-        "type": "drawBatch",
-        "name": "picking double sided all static draw pre-pass",
-        "reads": [
-          "rt-info-depth"
-        ],
-        "writes": [
-          "rt-ws-position",
-          "rt-ws-normal"
-        ],
-        "conditions": [
-          "transparent"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-picking-skinned-single-prepass": {
-        "id": "step-picking-skinned-single-prepass",
-        "type": "drawBatch",
-        "name": "picking skinned single sided draw node pre-pass",
-        "reads": [
-          "rt-info-depth"
-        ],
-        "writes": [
-          "rt-ws-position",
-          "rt-ws-normal"
-        ],
-        "conditions": [
-          "transparent"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-picking-skinned-double-prepass": {
-        "id": "step-picking-skinned-double-prepass",
-        "type": "drawBatch",
-        "name": "picking skinned double sided draw node pre-pass",
-        "reads": [
-          "rt-info-depth"
-        ],
-        "writes": [
-          "rt-ws-position",
-          "rt-ws-normal"
-        ],
-        "conditions": [
-          "transparent"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-picking-single": {
-        "id": "step-picking-single",
-        "type": "drawBatch",
-        "name": "picking single sided all static draw",
-        "reads": [
-          "rt-info-depth"
-        ],
-        "writes": [
-          "rt-ws-position",
-          "rt-ws-normal"
-        ],
-        "conditions": [
-          "transparent"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-picking-double": {
-        "id": "step-picking-double",
-        "type": "drawBatch",
-        "name": "picking double sided all static draw",
-        "reads": [
-          "rt-info-depth"
-        ],
-        "writes": [
-          "rt-ws-position",
-          "rt-ws-normal"
-        ],
-        "conditions": [
-          "transparent"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-picking-skinned-single": {
-        "id": "step-picking-skinned-single",
-        "type": "drawBatch",
-        "name": "picking skinned single sided draw node",
-        "reads": [
-          "rt-info-depth"
-        ],
-        "writes": [
-          "rt-ws-position",
-          "rt-ws-normal"
-        ],
-        "conditions": [
-          "transparent"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-picking-skinned-double": {
-        "id": "step-picking-skinned-double",
-        "type": "drawBatch",
-        "name": "picking skinned double sided draw node",
-        "reads": [
-          "rt-info-depth"
-        ],
-        "writes": [
-          "rt-ws-position",
-          "rt-ws-normal"
-        ],
-        "conditions": [
-          "transparent"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
+        "conditions": [],
+        "attachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-ws-position",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "target": "rt-ws-normal",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-info-depth",
+            "loadOp": "load",
+            "storeOp": "store",
+            "clearValue": 1
+          }
+        },
+        "commands": [
+          {
+            "id": "cmd-step-picking-viewport",
+            "name": "picking viewport node",
+            "type": "setDynamicState",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0,
+            "maxDepth": 1
+          },
+          {
+            "id": "cmd-step-picking-single-prepass",
+            "name": "picking single sided all static draw pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-picking-double-prepass",
+            "name": "picking double sided all static draw pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-picking-skinned-single-prepass",
+            "name": "picking skinned single sided draw node pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-picking-skinned-double-prepass",
+            "name": "picking skinned double sided draw node pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-picking-single",
+            "name": "picking single sided all static draw",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-picking-double",
+            "name": "picking double sided all static draw",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-picking-skinned-single",
+            "name": "picking skinned single sided draw node",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-picking-skinned-double",
+            "name": "picking skinned double sided draw node",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          }
+        ]
       },
       "step-clear-resolved-color-no-bg": {
         "id": "step-clear-resolved-color-no-bg",
@@ -1368,107 +1084,100 @@
         ],
         "targets": []
       },
-      "step-selection-viewport-single": {
-        "id": "step-selection-viewport-single",
-        "type": "viewport",
-        "name": "Viewport",
+      "pass-selection-outlines-raster": {
+        "id": "pass-selection-outlines-raster",
+        "type": "raster",
+        "name": "Selection Outlines",
         "reads": [],
         "writes": [],
-        "conditions": [
-          "selectionOutlines",
-          "!allOutlines"
-        ],
-        "x": 0,
-        "y": 0,
-        "width": "viewport.width",
-        "height": "viewport.height",
-        "minDepth": 0,
-        "maxDepth": 1
-      },
-      "step-selection-draw-static-single-a": {
-        "id": "step-selection-draw-static-single-a",
-        "type": "drawBatch",
-        "name": "draw outline static",
-        "reads": [],
-        "writes": [
-          "rt-selection"
-        ],
-        "conditions": [
-          "selectionOutlines",
-          "!allOutlines"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-selection-draw-static-single-b": {
-        "id": "step-selection-draw-static-single-b",
-        "type": "drawBatch",
-        "name": "draw outline static",
-        "reads": [],
-        "writes": [
-          "rt-selection"
-        ],
-        "conditions": [
-          "selectionOutlines",
-          "!allOutlines"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-selection-viewport-all": {
-        "id": "step-selection-viewport-all",
-        "type": "viewport",
-        "name": "Viewport",
-        "reads": [],
-        "writes": [],
-        "conditions": [
-          "selectionOutlines",
-          "allOutlines"
-        ],
-        "x": 0,
-        "y": 0,
-        "width": "viewport.width",
-        "height": "viewport.height",
-        "minDepth": 0,
-        "maxDepth": 1
-      },
-      "step-selection-draw-static-all-a": {
-        "id": "step-selection-draw-static-all-a",
-        "type": "drawBatch",
-        "name": "draw outline static all",
-        "reads": [],
-        "writes": [
-          "rt-selection"
-        ],
-        "conditions": [
-          "selectionOutlines",
-          "allOutlines"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-selection-draw-static-all-b": {
-        "id": "step-selection-draw-static-all-b",
-        "type": "drawBatch",
-        "name": "draw outline static all",
-        "reads": [],
-        "writes": [
-          "rt-selection"
-        ],
-        "conditions": [
-          "selectionOutlines",
-          "allOutlines"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
+        "conditions": [],
+        "attachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-selection",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-selection-depth",
+            "loadOp": "clear",
+            "storeOp": "store",
+            "clearValue": 1
+          }
+        },
+        "commands": [
+          {
+            "id": "cmd-step-selection-viewport-single",
+            "name": "Viewport",
+            "type": "setDynamicState",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0,
+            "maxDepth": 1
+          },
+          {
+            "id": "cmd-step-selection-draw-static-single-a",
+            "name": "draw outline static",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-selection-draw-static-single-b",
+            "name": "draw outline static",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-selection-viewport-all",
+            "name": "Viewport",
+            "type": "setDynamicState",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0,
+            "maxDepth": 1
+          },
+          {
+            "id": "cmd-step-selection-draw-static-all-a",
+            "name": "draw outline static all",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-selection-draw-static-all-b",
+            "name": "draw outline static all",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          }
+        ]
       },
       "step-compose-selection-aa": {
         "id": "step-compose-selection-aa",
@@ -1488,153 +1197,280 @@
         "groupsY": 1,
         "groupsZ": 1
       },
-      "step-main-opaque-viewport": {
-        "id": "step-main-opaque-viewport",
-        "type": "viewport",
-        "name": "main opaque VP",
+      "pass-main-opaque-raster": {
+        "id": "pass-main-opaque-raster",
+        "type": "raster",
+        "name": "Main Opaque",
         "reads": [],
         "writes": [],
-        "conditions": [
-          "opaque"
-        ],
-        "x": 0,
-        "y": 0,
-        "width": "viewport.width",
-        "height": "viewport.height",
-        "minDepth": 0,
-        "maxDepth": 1
+        "conditions": [],
+        "attachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-color-msaa",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                -1,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "target": "rt-specular-msaa",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "target": "rt-vs-normals-msaa",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-depth-msaa",
+            "loadOp": "clear",
+            "storeOp": "store",
+            "clearValue": 1
+          }
+        },
+        "commands": [
+          {
+            "id": "cmd-step-main-opaque-viewport",
+            "name": "main opaque VP",
+            "type": "setDynamicState",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0,
+            "maxDepth": 1
+          },
+          {
+            "id": "cmd-step-main-opaque-single-prepass",
+            "name": "main opaque single sided pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-main-opaque-double-prepass",
+            "name": "main opaque double sided pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-main-opaque-skinned-single-prepass",
+            "name": "main opaque single sided pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-main-opaque-skinned-double-prepass",
+            "name": "main opaque double sided pre-pass",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-main-copy-background",
+            "name": "copy background texture",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": false,
+            "depthWrite": false,
+            "cullMode": "none",
+            "withMaterials": false
+          },
+          {
+            "id": "cmd-step-main-opaque-single-materials",
+            "name": "main opaque single sided",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": true
+          },
+          {
+            "id": "cmd-step-main-opaque-double-materials",
+            "name": "main opaque double sided",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": true
+          },
+          {
+            "id": "cmd-step-main-debug",
+            "name": "main debug",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": false,
+            "depthWrite": false,
+            "cullMode": "none",
+            "withMaterials": false
+          }
+        ]
       },
-      "step-main-opaque-single-prepass": {
-        "id": "step-main-opaque-single-prepass",
-        "type": "drawBatch",
-        "name": "main opaque single sided pre-pass",
+      "pass-transparent-raster": {
+        "id": "pass-transparent-raster",
+        "type": "raster",
+        "name": "Transparent",
         "reads": [],
-        "writes": [
-          "rt-depth-msaa"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-main-opaque-double-prepass": {
-        "id": "step-main-opaque-double-prepass",
-        "type": "drawBatch",
-        "name": "main opaque double sided pre-pass",
-        "reads": [],
-        "writes": [
-          "rt-depth-msaa"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-main-opaque-skinned-single-prepass": {
-        "id": "step-main-opaque-skinned-single-prepass",
-        "type": "drawBatch",
-        "name": "main opaque single sided pre-pass",
-        "reads": [],
-        "writes": [
-          "rt-depth-msaa"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-main-opaque-skinned-double-prepass": {
-        "id": "step-main-opaque-skinned-double-prepass",
-        "type": "drawBatch",
-        "name": "main opaque double sided pre-pass",
-        "reads": [],
-        "writes": [
-          "rt-depth-msaa"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-main-copy-background": {
-        "id": "step-main-copy-background",
-        "type": "drawFullscreen",
-        "name": "copy background texture",
-        "reads": [
-          "rt-resolved-color"
-        ],
-        "writes": [
-          "rt-color-msaa"
-        ],
-        "conditions": [
-          "opaque",
-          "displayBackground"
-        ],
-        "shader": ""
-      },
-      "step-main-opaque-single-materials": {
-        "id": "step-main-opaque-single-materials",
-        "type": "drawBatchWithMaterials",
-        "name": "main opaque single sided",
-        "reads": [],
-        "writes": [
-          "rt-color-msaa",
-          "rt-specular-msaa",
-          "rt-vs-normals-msaa"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-main-opaque-double-materials": {
-        "id": "step-main-opaque-double-materials",
-        "type": "drawBatchWithMaterials",
-        "name": "main opaque double sided",
-        "reads": [],
-        "writes": [
-          "rt-color-msaa",
-          "rt-specular-msaa",
-          "rt-vs-normals-msaa"
-        ],
-        "conditions": [
-          "opaque"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-main-debug": {
-        "id": "step-main-debug",
-        "type": "drawDebugLines",
-        "name": "main debug",
-        "reads": [
-          "rt-depth-msaa"
-        ],
-        "writes": [
-          "rt-color-msaa"
-        ],
-        "conditions": [
-          "opaque",
-          "debugLines"
-        ],
-        "lineWidth": 1
+        "writes": [],
+        "conditions": [],
+        "attachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-transparent-accum",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "target": "rt-transparent-reveal",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-depth-msaa",
+            "loadOp": "load",
+            "storeOp": "store",
+            "clearValue": 1
+          }
+        },
+        "commands": [
+          {
+            "id": "cmd-step-transparent-alpha-accum-viewport",
+            "name": "Transparent VP",
+            "type": "setDynamicState",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0,
+            "maxDepth": 1
+          },
+          {
+            "id": "cmd-step-transparent-alpha-accum-draw",
+            "name": "Transparent Material Alpha Accum",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": true
+          },
+          {
+            "id": "cmd-step-transparent-atoc-viewport",
+            "name": "Transparent VP",
+            "type": "setDynamicState",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0,
+            "maxDepth": 1
+          },
+          {
+            "id": "cmd-step-transparent-atoc-draw",
+            "name": "Transparent Material Stochastic",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": true
+          },
+          {
+            "id": "cmd-step-transparent-stochastic-color-viewport",
+            "name": "Transparent VP",
+            "type": "setDynamicState",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0,
+            "maxDepth": 1
+          },
+          {
+            "id": "cmd-step-transparent-stochastic-color-draw",
+            "name": "Transparent",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": true
+          },
+          {
+            "id": "cmd-step-transparent-regular-viewport",
+            "name": "Transparent VP",
+            "type": "setDynamicState",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0,
+            "maxDepth": 1
+          },
+          {
+            "id": "cmd-step-transparent-regular-draw",
+            "name": "Transparent",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": true
+          }
+        ]
       },
       "step-transparent-ground-plane": {
         "id": "step-transparent-ground-plane",
@@ -1683,143 +1519,6 @@
         "groupsX": 1,
         "groupsY": 1,
         "groupsZ": 1
-      },
-      "step-transparent-alpha-accum-viewport": {
-        "id": "step-transparent-alpha-accum-viewport",
-        "type": "viewport",
-        "name": "Transparent VP",
-        "reads": [],
-        "writes": [],
-        "conditions": [
-          "stochasticTransparency"
-        ],
-        "x": 0,
-        "y": 0,
-        "width": "viewport.width",
-        "height": "viewport.height",
-        "minDepth": 0,
-        "maxDepth": 1
-      },
-      "step-transparent-alpha-accum-draw": {
-        "id": "step-transparent-alpha-accum-draw",
-        "type": "drawBatchWithMaterials",
-        "name": "Transparent Material Alpha Accum",
-        "reads": [
-          "rt-depth-backup"
-        ],
-        "writes": [
-          "rt-stochastic-transparent-alpha"
-        ],
-        "conditions": [
-          "stochasticTransparency"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-transparent-atoc-viewport": {
-        "id": "step-transparent-atoc-viewport",
-        "type": "viewport",
-        "name": "Transparent VP",
-        "reads": [],
-        "writes": [],
-        "conditions": [
-          "stochasticTransparency"
-        ],
-        "x": 0,
-        "y": 0,
-        "width": "viewport.width",
-        "height": "viewport.height",
-        "minDepth": 0,
-        "maxDepth": 1
-      },
-      "step-transparent-atoc-draw": {
-        "id": "step-transparent-atoc-draw",
-        "type": "drawBatchWithMaterials",
-        "name": "Transparent Material Stochastic",
-        "reads": [
-          "rt-depth-msaa"
-        ],
-        "writes": [
-          "rt-depth-msaa"
-        ],
-        "conditions": [
-          "stochasticTransparency"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-transparent-stochastic-color-viewport": {
-        "id": "step-transparent-stochastic-color-viewport",
-        "type": "viewport",
-        "name": "Transparent VP",
-        "reads": [],
-        "writes": [],
-        "conditions": [
-          "stochasticTransparency"
-        ],
-        "x": 0,
-        "y": 0,
-        "width": "viewport.width",
-        "height": "viewport.height",
-        "minDepth": 0,
-        "maxDepth": 1
-      },
-      "step-transparent-stochastic-color-draw": {
-        "id": "step-transparent-stochastic-color-draw",
-        "type": "drawBatchWithMaterials",
-        "name": "Transparent",
-        "reads": [
-          "rt-depth-msaa"
-        ],
-        "writes": [
-          "rt-stochastic-transparent-color"
-        ],
-        "conditions": [
-          "stochasticTransparency"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
-      },
-      "step-transparent-regular-viewport": {
-        "id": "step-transparent-regular-viewport",
-        "type": "viewport",
-        "name": "Transparent VP",
-        "reads": [],
-        "writes": [],
-        "conditions": [
-          "transparent"
-        ],
-        "x": 0,
-        "y": 0,
-        "width": "viewport.width",
-        "height": "viewport.height",
-        "minDepth": 0,
-        "maxDepth": 1
-      },
-      "step-transparent-regular-draw": {
-        "id": "step-transparent-regular-draw",
-        "type": "drawBatchWithMaterials",
-        "name": "Transparent",
-        "reads": [
-          "rt-depth-msaa"
-        ],
-        "writes": [
-          "rt-transparent-accum",
-          "rt-transparent-reveal"
-        ],
-        "conditions": [
-          "transparent"
-        ],
-        "shader": "",
-        "depthTest": true,
-        "depthWrite": true,
-        "cullMode": "back"
       },
       "step-compose-transparent": {
         "id": "step-compose-transparent",
@@ -2988,34 +2687,52 @@
         "groupsY": 1,
         "groupsZ": 1
       },
-      "step-grid-viewport": {
-        "id": "step-grid-viewport",
-        "type": "viewport",
-        "name": "Grid VP",
+      "pass-grid-raster": {
+        "id": "pass-grid-raster",
+        "type": "raster",
+        "name": "Grid",
         "reads": [],
         "writes": [],
-        "conditions": [
-          "grid"
-        ],
-        "x": 0,
-        "y": 0,
-        "width": "viewport.width",
-        "height": "viewport.height",
-        "minDepth": 0,
-        "maxDepth": 1
-      },
-      "step-grid-fullscreen": {
-        "id": "step-grid-fullscreen",
-        "type": "drawFullscreen",
-        "name": "draw bufferless grid quad",
-        "reads": [],
-        "writes": [
-          "rt-resolved-color"
-        ],
-        "conditions": [
-          "grid"
-        ],
-        "shader": ""
+        "conditions": [],
+        "attachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-resolved-color",
+              "loadOp": "load",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ]
+        },
+        "commands": [
+          {
+            "id": "cmd-step-grid-viewport",
+            "name": "Grid VP",
+            "type": "setDynamicState",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0,
+            "maxDepth": 1
+          },
+          {
+            "id": "cmd-step-grid-fullscreen",
+            "name": "draw bufferless grid quad",
+            "type": "drawBatch",
+            "shader": "",
+            "depthTest": false,
+            "depthWrite": false,
+            "cullMode": "none",
+            "withMaterials": false
+          }
+        ]
       },
       "step-maxmip-1-8-inv-z": {
         "id": "step-maxmip-1-8-inv-z",

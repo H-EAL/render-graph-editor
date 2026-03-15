@@ -16,88 +16,127 @@ export const deferredSeed: PipelineDocument = {
     ],
     passes: {
       'pass-gbuffer': {
-        id: 'pass-gbuffer', name: 'GBuffer Fill', kind: 'raster',
+        id: 'pass-gbuffer', name: 'GBuffer Fill',
         timelineId: 'tl-gfx', enabled: true, conditions: [],
         reads: [], writes: ['rt-albedo', 'rt-normal', 'rt-depth'],
-        steps: ['step-gbuffer-vp', 'step-gbuffer-draw'],
-        rasterAttachments: {
+        steps: ['step-gbuffer-raster'],
+      },
+      'pass-shadow': {
+        id: 'pass-shadow', name: 'Shadow Map',
+        timelineId: 'tl-gfx', enabled: true, conditions: ['castsShadows'],
+        reads: [], writes: ['rt-shadow'],
+        steps: ['step-shadow-raster'],
+      },
+      'pass-composite': {
+        id: 'pass-composite', name: 'Main Composite',
+        timelineId: 'tl-gfx', enabled: true, conditions: [],
+        reads: ['rt-albedo', 'rt-normal', 'rt-depth', 'rt-ssao', 'buf-light-list'],
+        writes: ['rt-hdr'],
+        steps: ['step-composite-raster'],
+      },
+      'pass-postprocess': {
+        id: 'pass-postprocess', name: 'Post-Process',
+        timelineId: 'tl-gfx', enabled: true, conditions: [],
+        reads: ['rt-hdr'], writes: ['rt-ldr'],
+        steps: ['step-pp-raster'],
+      },
+      'pass-ui': {
+        id: 'pass-ui', name: 'UI Overlay',
+        timelineId: 'tl-gfx', enabled: true, conditions: ['showUI'],
+        reads: [], writes: ['rt-ldr'],
+        steps: ['step-ui-raster'],
+      },
+      'pass-ssao': {
+        id: 'pass-ssao', name: 'SSAO',
+        timelineId: 'tl-async', enabled: true, conditions: ['ssaoEnabled'],
+        reads: ['rt-depth', 'rt-normal'], writes: ['rt-ssao'],
+        steps: ['step-ssao-dispatch'],
+      },
+      'pass-lightculling': {
+        id: 'pass-lightculling', name: 'Light Culling',
+        timelineId: 'tl-async', enabled: true, conditions: [],
+        reads: ['rt-depth', 'rt-shadow'], writes: ['buf-light-list'],
+        steps: ['step-cull-dispatch'],
+      },
+      'pass-particles': {
+        id: 'pass-particles', name: 'Particle Update',
+        timelineId: 'tl-async', enabled: true, conditions: ['particlesEnabled'],
+        reads: ['rt-depth'], writes: ['buf-particles'],
+        steps: ['step-particles-dispatch'],
+      },
+    },
+    steps: {
+      'step-gbuffer-raster': {
+        id: 'step-gbuffer-raster', name: 'GBuffer Raster', type: 'raster',
+        reads: [], writes: [], conditions: [],
+        attachments: {
           colorAttachments: [
             { target: 'rt-albedo', loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] },
             { target: 'rt-normal', loadOp: 'clear', storeOp: 'store', clearValue: [0.5, 0.5, 1, 0] },
           ],
           depthAttachment: { target: 'rt-depth', loadOp: 'clear', storeOp: 'store', clearValue: 1 },
         },
+        commands: [
+          { id: 'cmd-gbuf-vp',   type: 'setDynamicState', name: 'Set Viewport',   stateType: 'viewport', x: 0, y: 0, width: 'viewport.width', height: 'viewport.height', minDepth: 0, maxDepth: 1 },
+          { id: 'cmd-gbuf-draw', type: 'drawBatch',        name: 'Draw Geometry',  shader: 'sh-gbuffer', depthTest: true, depthWrite: true, cullMode: 'back', withMaterials: true },
+        ],
       },
-      'pass-shadow': {
-        id: 'pass-shadow', name: 'Shadow Map', kind: 'raster',
-        timelineId: 'tl-gfx', enabled: true, conditions: ['castsShadows'],
-        reads: [], writes: ['rt-shadow'],
-        steps: ['step-shadow-draw'],
-        rasterAttachments: {
+      'step-shadow-raster': {
+        id: 'step-shadow-raster', name: 'Shadow Raster', type: 'raster',
+        reads: [], writes: [], conditions: [],
+        attachments: {
           colorAttachments: [],
           depthAttachment: { target: 'rt-shadow', loadOp: 'clear', storeOp: 'store', clearValue: 1 },
         },
+        commands: [
+          { id: 'cmd-shadow-draw', type: 'drawBatch', name: 'Draw Shadow Casters', shader: 'sh-shadow', depthTest: true, depthWrite: true, cullMode: 'front' },
+        ],
       },
-      'pass-composite': {
-        id: 'pass-composite', name: 'Main Composite', kind: 'raster',
-        timelineId: 'tl-gfx', enabled: true, conditions: [],
-        reads: ['rt-albedo', 'rt-normal', 'rt-depth', 'rt-ssao', 'buf-light-list'],
-        writes: ['rt-hdr'],
-        steps: ['step-composite-fs'],
-        rasterAttachments: {
+      'step-composite-raster': {
+        id: 'step-composite-raster', name: 'Composite Raster', type: 'raster',
+        reads: [], writes: [], conditions: [],
+        attachments: {
           colorAttachments: [{ target: 'rt-hdr', loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
         },
+        commands: [
+          { id: 'cmd-composite-draw', type: 'drawBatch', name: 'Deferred Composite', shader: 'sh-composite', depthTest: false, depthWrite: false, cullMode: 'none' },
+        ],
       },
-      'pass-postprocess': {
-        id: 'pass-postprocess', name: 'Post-Process', kind: 'raster',
-        timelineId: 'tl-gfx', enabled: true, conditions: [],
-        reads: ['rt-hdr'], writes: ['rt-ldr'],
-        steps: ['step-pp-tonemap'],
-        rasterAttachments: {
+      'step-pp-raster': {
+        id: 'step-pp-raster', name: 'Post-Process Raster', type: 'raster',
+        reads: [], writes: [], conditions: [],
+        attachments: {
           colorAttachments: [{ target: 'rt-ldr', loadOp: 'dontCare', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
         },
+        commands: [
+          { id: 'cmd-pp-draw', type: 'drawBatch', name: 'Tonemap + Film Grain', shader: 'sh-tonemap', depthTest: false, depthWrite: false, cullMode: 'none' },
+        ],
       },
-      'pass-ui': {
-        id: 'pass-ui', name: 'UI Overlay', kind: 'raster',
-        timelineId: 'tl-gfx', enabled: true, conditions: ['showUI'],
-        reads: [], writes: ['rt-ldr'],
-        steps: ['step-ui-draw'],
-        rasterAttachments: {
+      'step-ui-raster': {
+        id: 'step-ui-raster', name: 'UI Raster', type: 'raster',
+        reads: [], writes: [], conditions: [],
+        attachments: {
           colorAttachments: [{ target: 'rt-ldr', loadOp: 'load', storeOp: 'store', clearValue: [0, 0, 0, 0], blendState: 'bs-alpha' }],
         },
+        commands: [
+          { id: 'cmd-ui-draw', type: 'drawBatch', name: 'Draw UI Batch', shader: 'sh-ui', blendState: 'bs-alpha', depthTest: false, depthWrite: false, cullMode: 'none' },
+        ],
       },
-      'pass-ssao': {
-        id: 'pass-ssao', name: 'SSAO', kind: 'compute',
-        timelineId: 'tl-async', enabled: true, conditions: ['ssaoEnabled'],
-        reads: ['rt-depth', 'rt-normal'], writes: ['rt-ssao'],
-        steps: ['step-ssao-dispatch'],
-        rasterAttachments: { colorAttachments: [] },
+      'step-ssao-dispatch': {
+        id: 'step-ssao-dispatch', name: 'SSAO Kernel', type: 'dispatchCompute',
+        reads: [], writes: [], conditions: [],
+        shader: 'sh-ssao', groupsX: 'ceil(viewport.width/8)', groupsY: 'ceil(viewport.height/8)', groupsZ: 1,
       },
-      'pass-lightculling': {
-        id: 'pass-lightculling', name: 'Light Culling', kind: 'compute',
-        timelineId: 'tl-async', enabled: true, conditions: [],
-        reads: ['rt-depth', 'rt-shadow'], writes: ['buf-light-list'],
-        steps: ['step-cull-dispatch'],
-        rasterAttachments: { colorAttachments: [] },
+      'step-cull-dispatch': {
+        id: 'step-cull-dispatch', name: 'Cull Lights', type: 'dispatchCompute',
+        reads: [], writes: [], conditions: [],
+        shader: 'sh-lightcull', groupsX: 'ceil(viewport.width/16)', groupsY: 'ceil(viewport.height/16)', groupsZ: 1,
       },
-      'pass-particles': {
-        id: 'pass-particles', name: 'Particle Update', kind: 'compute',
-        timelineId: 'tl-async', enabled: true, conditions: ['particlesEnabled'],
-        reads: ['rt-depth'], writes: ['buf-particles'],
-        steps: ['step-particles-dispatch'],
-        rasterAttachments: { colorAttachments: [] },
+      'step-particles-dispatch': {
+        id: 'step-particles-dispatch', name: 'Simulate Particles', type: 'dispatchCompute',
+        reads: [], writes: [], conditions: [],
+        shader: 'sh-particles', groupsX: 256, groupsY: 1, groupsZ: 1,
       },
-    },
-    steps: {
-      'step-gbuffer-vp':         { id: 'step-gbuffer-vp',         name: 'Set Viewport',          type: 'viewport',              reads: [], writes: [], conditions: [], x: 0, y: 0, width: 'viewport.width', height: 'viewport.height', minDepth: 0, maxDepth: 1 },
-      'step-gbuffer-draw':       { id: 'step-gbuffer-draw',       name: 'Draw Geometry',          type: 'drawBatchWithMaterials', reads: [], writes: [], conditions: [], shader: 'sh-gbuffer',   depthTest: true,  depthWrite: true,  cullMode: 'back'  },
-      'step-shadow-draw':        { id: 'step-shadow-draw',        name: 'Draw Shadow Casters',    type: 'drawBatch',             reads: [], writes: [], conditions: [], shader: 'sh-shadow',    depthTest: true,  depthWrite: true,  cullMode: 'front' },
-      'step-composite-fs':       { id: 'step-composite-fs',       name: 'Deferred Composite',     type: 'drawFullscreen',        reads: [], writes: [], conditions: [], shader: 'sh-composite' },
-      'step-pp-tonemap':         { id: 'step-pp-tonemap',         name: 'Tonemap + Film Grain',   type: 'drawFullscreen',        reads: [], writes: [], conditions: [], shader: 'sh-tonemap'   },
-      'step-ui-draw':            { id: 'step-ui-draw',            name: 'Draw UI Batch',          type: 'drawBatch',             reads: [], writes: [], conditions: [], shader: 'sh-ui', blendState: 'bs-alpha', depthTest: false, depthWrite: false, cullMode: 'none' },
-      'step-ssao-dispatch':      { id: 'step-ssao-dispatch',      name: 'SSAO Kernel',            type: 'dispatchCompute',       reads: [], writes: [], conditions: [], shader: 'sh-ssao',      groupsX: 'ceil(viewport.width/8)',  groupsY: 'ceil(viewport.height/8)',  groupsZ: 1 },
-      'step-cull-dispatch':      { id: 'step-cull-dispatch',      name: 'Cull Lights',            type: 'dispatchCompute',       reads: [], writes: [], conditions: [], shader: 'sh-lightcull', groupsX: 'ceil(viewport.width/16)', groupsY: 'ceil(viewport.height/16)', groupsZ: 1 },
-      'step-particles-dispatch': { id: 'step-particles-dispatch', name: 'Simulate Particles',     type: 'dispatchCompute',       reads: [], writes: [], conditions: [], shader: 'sh-particles', groupsX: 256, groupsY: 1, groupsZ: 1 },
     },
   },
   resources: {

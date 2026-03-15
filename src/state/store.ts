@@ -9,6 +9,10 @@ import type {
   Step,
   StepId,
   StepType,
+  RasterStep,
+  RasterCommand,
+  RasterCommandType,
+  CommandId,
   Timeline,
   TimelineId,
   TimelineType,
@@ -23,19 +27,35 @@ import type {
 
 // ─── Default factories ────────────────────────────────────────────────────────
 
+function makeDefaultCommand(type: RasterCommandType): RasterCommand {
+  const id = newId();
+  switch (type) {
+    case 'setDynamicState':
+      return {
+        id, type, name: 'Set Viewport', stateType: 'viewport',
+        x: 0, y: 0, width: 'viewport.width', height: 'viewport.height', minDepth: 0, maxDepth: 1,
+      };
+    case 'drawBatch':
+      return {
+        id, type, name: 'Draw Batch', shader: '',
+        depthTest: true, depthWrite: true, cullMode: 'back',
+      };
+  }
+}
+
 export function makeDefaultStep(type: StepType): Step {
   const base = { id: newId(), name: `New ${type}`, reads: [], writes: [], conditions: [] };
   switch (type) {
-    case 'drawBatch':
-      return { ...base, type, shader: '', blendState: '', depthTest: true, depthWrite: true, cullMode: 'back' };
-    case 'drawBatchWithMaterials':
-      return { ...base, type, shader: '', blendState: '', depthTest: true, depthWrite: true, cullMode: 'back' };
+    case 'raster':
+      return {
+        ...base, type,
+        attachments: { colorAttachments: [] },
+        commands: [],
+      };
     case 'dispatchCompute':
       return { ...base, type, shader: '', groupsX: 1, groupsY: 1, groupsZ: 1 };
     case 'dispatchRayTracing':
       return { ...base, type, raygenShader: '', width: 'viewport.width', height: 'viewport.height' };
-    case 'drawFullscreen':
-      return { ...base, type, shader: '' };
     case 'copyImage':
       return { ...base, type, source: '', destination: '' };
     case 'blitImage':
@@ -48,10 +68,6 @@ export function makeDefaultStep(type: StepType): Step {
       return { ...base, type, target: '', value: 0 };
     case 'generateMipChain':
       return { ...base, type, target: '', filter: 'linear' };
-    case 'viewport':
-      return { ...base, type, x: 0, y: 0, width: 'viewport.width', height: 'viewport.height', minDepth: 0, maxDepth: 1 };
-    case 'drawDebugLines':
-      return { ...base, type, lineWidth: 1 };
   }
 }
 
@@ -59,7 +75,6 @@ function makeDefaultPass(timelineId: TimelineId): Pass {
   return {
     id: newId(),
     name: 'New Pass',
-    kind: 'raster',
     timelineId,
     enabled: true,
     conditions: [],
@@ -67,7 +82,6 @@ function makeDefaultPass(timelineId: TimelineId): Pass {
     writes: [],
     manualDeps: [],
     steps: [],
-    rasterAttachments: { colorAttachments: [], depthAttachment: undefined },
   };
 }
 
@@ -97,6 +111,7 @@ export interface AppState {
   // Selection
   selectedPassId: PassId | null;
   selectedStepId: StepId | null;
+  selectedCommandId: CommandId | null;
   selectedResourceId: ResourceId | null;
   /** Display order of RT + Buffer resources in the timeline overlay rows */
   resourceOrder: ResourceId[];
@@ -123,9 +138,17 @@ export interface AppState {
   reorderSteps: (passId: PassId, orderedIds: StepId[]) => void;
   updateStep: (stepId: StepId, patch: Partial<Step>) => void;
 
+  // ── Raster command actions ────────────────────────────────────────────────
+  addRasterCommand: (stepId: StepId, type: RasterCommandType) => void;
+  deleteRasterCommand: (stepId: StepId, commandId: CommandId) => void;
+  duplicateRasterCommand: (stepId: StepId, commandId: CommandId) => void;
+  reorderRasterCommands: (stepId: StepId, commands: RasterCommand[]) => void;
+  updateRasterCommand: (stepId: StepId, commandId: CommandId, patch: Partial<RasterCommand>) => void;
+
   // ── Selection ─────────────────────────────────────────────────────────────
   selectPass: (id: PassId | null) => void;
   selectStep: (id: StepId | null) => void;
+  selectCommand: (id: CommandId | null) => void;
   selectResource: (id: ResourceId | null) => void;
   setResourceOrder: (ids: ResourceId[]) => void;
   addManualDep: (passId: PassId, depPassId: PassId) => void;
@@ -166,12 +189,19 @@ function firstPassId(pipeline: Pipeline): PassId | null {
   return null;
 }
 
+function getRasterStep(pipeline: Pipeline, stepId: StepId): RasterStep | null {
+  const step = pipeline.steps[stepId];
+  if (!step || step.type !== 'raster') return null;
+  return step as RasterStep;
+}
+
 export const useStore = create<AppState>()(
   subscribeWithSelector((set, get) => ({
     pipeline: seedDocument.pipeline,
     resources: seedDocument.resources,
     selectedPassId: firstPassId(seedDocument.pipeline),
     selectedStepId: null,
+    selectedCommandId: null,
     selectedResourceId: null,
     resourceOrder: resourceOrderFromLibrary(seedDocument.resources),
 
@@ -201,6 +231,7 @@ export const useStore = create<AppState>()(
           pipeline: { ...s.pipeline, timelines, passes, steps },
           selectedPassId,
           selectedStepId: timeline.passIds.includes(s.selectedPassId ?? '') ? null : s.selectedStepId,
+          selectedCommandId: null,
         };
       }),
 
@@ -237,7 +268,7 @@ export const useStore = create<AppState>()(
           else ids.push(pass.id);
           return { ...tl, passIds: ids };
         });
-        return { pipeline: { ...s.pipeline, timelines, passes }, selectedPassId: pass.id, selectedStepId: null };
+        return { pipeline: { ...s.pipeline, timelines, passes }, selectedPassId: pass.id, selectedStepId: null, selectedCommandId: null };
       }),
 
     deletePass: (id) =>
@@ -257,6 +288,7 @@ export const useStore = create<AppState>()(
           pipeline: { ...s.pipeline, timelines, passes, steps },
           selectedPassId,
           selectedStepId: s.selectedPassId === id ? null : s.selectedStepId,
+          selectedCommandId: null,
         };
       }),
 
@@ -269,7 +301,14 @@ export const useStore = create<AppState>()(
         src.steps.forEach((sid) => {
           const srcStep = s.pipeline.steps[sid];
           if (!srcStep) return;
-          const newStep = { ...srcStep, id: newId() };
+          let newStep: Step;
+          if (srcStep.type === 'raster') {
+            // Deep-clone commands with fresh IDs
+            const newCommands = (srcStep as RasterStep).commands.map((cmd) => ({ ...cmd, id: newId() }));
+            newStep = { ...srcStep, id: newId(), commands: newCommands };
+          } else {
+            newStep = { ...srcStep, id: newId() };
+          }
           newSteps[newStep.id] = newStep;
           newStepIds.push(newStep.id);
         });
@@ -282,7 +321,7 @@ export const useStore = create<AppState>()(
           newPassIds.splice(idx + 1, 0, newPass.id);
           return { ...tl, passIds: newPassIds };
         });
-        return { pipeline: { ...s.pipeline, timelines, passes, steps: newSteps }, selectedPassId: newPass.id, selectedStepId: null };
+        return { pipeline: { ...s.pipeline, timelines, passes, steps: newSteps }, selectedPassId: newPass.id, selectedStepId: null, selectedCommandId: null };
       }),
 
     reorderPassesInTimeline: (timelineId, orderedIds) =>
@@ -325,7 +364,7 @@ export const useStore = create<AppState>()(
         if (!pass) return {};
         const passes = { ...s.pipeline.passes, [passId]: { ...pass, steps: [...pass.steps, step.id] } };
         const steps = { ...s.pipeline.steps, [step.id]: step };
-        return { pipeline: { ...s.pipeline, passes, steps }, selectedStepId: step.id };
+        return { pipeline: { ...s.pipeline, passes, steps }, selectedStepId: step.id, selectedCommandId: null };
       }),
 
     deleteStep: (passId, stepId) =>
@@ -338,6 +377,7 @@ export const useStore = create<AppState>()(
         return {
           pipeline: { ...s.pipeline, passes, steps },
           selectedStepId: s.selectedStepId === stepId ? null : s.selectedStepId,
+          selectedCommandId: s.selectedStepId === stepId ? null : s.selectedCommandId,
         };
       }),
 
@@ -346,13 +386,19 @@ export const useStore = create<AppState>()(
         const src = s.pipeline.steps[stepId];
         const pass = s.pipeline.passes[passId];
         if (!src || !pass) return {};
-        const newStep = { ...src, id: newId(), name: src.name + ' (copy)' };
+        let newStep: Step;
+        if (src.type === 'raster') {
+          const newCommands = (src as RasterStep).commands.map((cmd) => ({ ...cmd, id: newId() }));
+          newStep = { ...src, id: newId(), name: src.name + ' (copy)', commands: newCommands };
+        } else {
+          newStep = { ...src, id: newId(), name: src.name + ' (copy)' };
+        }
         const idx = pass.steps.indexOf(stepId);
         const newStepIds = [...pass.steps];
         newStepIds.splice(idx + 1, 0, newStep.id);
         const passes = { ...s.pipeline.passes, [passId]: { ...pass, steps: newStepIds } };
         const steps = { ...s.pipeline.steps, [newStep.id]: newStep };
-        return { pipeline: { ...s.pipeline, passes, steps }, selectedStepId: newStep.id };
+        return { pipeline: { ...s.pipeline, passes, steps }, selectedStepId: newStep.id, selectedCommandId: null };
       }),
 
     reorderSteps: (passId, orderedIds) =>
@@ -375,9 +421,69 @@ export const useStore = create<AppState>()(
         },
       })),
 
+    // ── Raster commands ───────────────────────────────────────────────────
+    addRasterCommand: (stepId, type) =>
+      set((s) => {
+        const step = getRasterStep(s.pipeline, stepId);
+        if (!step) return {};
+        const cmd = makeDefaultCommand(type);
+        const newStep: RasterStep = { ...step, commands: [...step.commands, cmd] };
+        return {
+          pipeline: { ...s.pipeline, steps: { ...s.pipeline.steps, [stepId]: newStep } },
+          selectedCommandId: cmd.id,
+        };
+      }),
+
+    deleteRasterCommand: (stepId, commandId) =>
+      set((s) => {
+        const step = getRasterStep(s.pipeline, stepId);
+        if (!step) return {};
+        const newStep: RasterStep = { ...step, commands: step.commands.filter((c) => c.id !== commandId) };
+        return {
+          pipeline: { ...s.pipeline, steps: { ...s.pipeline.steps, [stepId]: newStep } },
+          selectedCommandId: s.selectedCommandId === commandId ? null : s.selectedCommandId,
+        };
+      }),
+
+    duplicateRasterCommand: (stepId, commandId) =>
+      set((s) => {
+        const step = getRasterStep(s.pipeline, stepId);
+        if (!step) return {};
+        const idx = step.commands.findIndex((c) => c.id === commandId);
+        if (idx === -1) return {};
+        const newCmd = { ...step.commands[idx], id: newId() };
+        const newCommands = [...step.commands];
+        newCommands.splice(idx + 1, 0, newCmd);
+        const newStep: RasterStep = { ...step, commands: newCommands };
+        return {
+          pipeline: { ...s.pipeline, steps: { ...s.pipeline.steps, [stepId]: newStep } },
+          selectedCommandId: newCmd.id,
+        };
+      }),
+
+    reorderRasterCommands: (stepId, commands) =>
+      set((s) => {
+        const step = getRasterStep(s.pipeline, stepId);
+        if (!step) return {};
+        const newStep: RasterStep = { ...step, commands };
+        return { pipeline: { ...s.pipeline, steps: { ...s.pipeline.steps, [stepId]: newStep } } };
+      }),
+
+    updateRasterCommand: (stepId, commandId, patch) =>
+      set((s) => {
+        const step = getRasterStep(s.pipeline, stepId);
+        if (!step) return {};
+        const newCommands = step.commands.map((c) =>
+          c.id === commandId ? { ...c, ...patch } as RasterCommand : c
+        );
+        const newStep: RasterStep = { ...step, commands: newCommands };
+        return { pipeline: { ...s.pipeline, steps: { ...s.pipeline.steps, [stepId]: newStep } } };
+      }),
+
     // ── Selection ─────────────────────────────────────────────────────────
-    selectPass: (id) => set({ selectedPassId: id, selectedStepId: null }),
-    selectStep: (id) => set({ selectedStepId: id }),
+    selectPass: (id) => set({ selectedPassId: id, selectedStepId: null, selectedCommandId: null }),
+    selectStep: (id) => set({ selectedStepId: id, selectedCommandId: null }),
+    selectCommand: (id) => set({ selectedCommandId: id }),
     selectResource: (id) => set({ selectedResourceId: id }),
     setResourceOrder: (ids) => set({ resourceOrder: ids }),
 
@@ -481,6 +587,7 @@ export const useStore = create<AppState>()(
           resources: doc.resources,
           selectedPassId: firstPassId(doc.pipeline),
           selectedStepId: null,
+          selectedCommandId: null,
           selectedResourceId: null,
           resourceOrder: resourceOrderFromLibrary(doc.resources),
         });

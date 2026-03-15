@@ -1,4 +1,4 @@
-import type { Pipeline, ResourceLibrary, ValidationIssue } from '../types';
+import type { Pipeline, ResourceLibrary, ValidationIssue, RasterStep } from '../types';
 import { deriveDependencies } from '../utils/dependencyGraph';
 import { newId } from '../utils/id';
 
@@ -41,12 +41,6 @@ export function validateDocument(pipeline: Pipeline, resources: ResourceLibrary)
       issues.push({ id: newId(), severity: 'error', message: `Pass "${pass.name}" references unknown timeline "${pass.timelineId}"`, location: pass.name });
     }
 
-    // Raster pass on non-graphics timeline?
-    const tl = pipeline.timelines.find((t) => t.id === pass.timelineId);
-    if (pass.kind === 'raster' && tl && tl.type === 'asyncCompute') {
-      issues.push({ id: newId(), severity: 'warning', message: `Raster pass "${pass.name}" is on Async Compute timeline — raster typically runs on Graphics`, location: pass.name });
-    }
-
     // Pass in timelines' passIds?
     if (!allTimelinePassIds.has(pid)) {
       issues.push({ id: newId(), severity: 'error', message: `Pass "${pass.name}" exists in passes map but is not referenced by any timeline`, location: pass.name });
@@ -66,21 +60,6 @@ export function validateDocument(pipeline: Pipeline, resources: ResourceLibrary)
     for (const rid of pass.writes) {
       if (!allResourceIds.has(rid)) {
         issues.push({ id: newId(), severity: 'warning', message: `Pass "${pass.name}" writes unknown resource "${rid}"`, location: pass.name });
-      }
-    }
-
-    // Raster attachment references
-    if (pass.kind === 'raster' && pass.rasterAttachments) {
-      for (const ca of pass.rasterAttachments.colorAttachments) {
-        if (ca.target && !allResourceIds.has(ca.target)) {
-          issues.push({ id: newId(), severity: 'error', message: `Pass "${pass.name}" color attachment references unknown target "${ca.target}"`, location: pass.name });
-        }
-        if (ca.blendState && !allResourceIds.has(ca.blendState)) {
-          issues.push({ id: newId(), severity: 'warning', message: `Pass "${pass.name}" color attachment references unknown blend state "${ca.blendState}"`, location: pass.name });
-        }
-      }
-      if (pass.rasterAttachments.depthAttachment?.target && !allResourceIds.has(pass.rasterAttachments.depthAttachment.target)) {
-        issues.push({ id: newId(), severity: 'error', message: `Pass "${pass.name}" depth attachment references unknown target "${pass.rasterAttachments.depthAttachment.target}"`, location: pass.name });
       }
     }
 
@@ -120,11 +99,36 @@ export function validateDocument(pipeline: Pipeline, resources: ResourceLibrary)
       }
     }
 
-    if ((step.type === 'drawBatch' || step.type === 'drawBatchWithMaterials') && step.shader && !allResourceIds.has(step.shader)) {
-      issues.push({ id: newId(), severity: 'error', message: `Step "${step.name}" references unknown shader "${step.shader}"`, location: step.name });
+    if (step.type === 'raster') {
+      const raster = step as RasterStep;
+      // Validate color attachments
+      for (const ca of raster.attachments.colorAttachments) {
+        if (ca.target && !allResourceIds.has(ca.target)) {
+          issues.push({ id: newId(), severity: 'error', message: `Step "${step.name}" color attachment references unknown target "${ca.target}"`, location: step.name });
+        }
+        if (ca.blendState && !allResourceIds.has(ca.blendState)) {
+          issues.push({ id: newId(), severity: 'warning', message: `Step "${step.name}" color attachment references unknown blend state "${ca.blendState}"`, location: step.name });
+        }
+      }
+      if (raster.attachments.depthAttachment?.target && !allResourceIds.has(raster.attachments.depthAttachment.target)) {
+        issues.push({ id: newId(), severity: 'error', message: `Step "${step.name}" depth attachment references unknown target "${raster.attachments.depthAttachment.target}"`, location: step.name });
+      }
+      // Validate commands
+      for (const cmd of raster.commands) {
+        if (cmd.type === 'drawBatch' && cmd.shader && !allResourceIds.has(cmd.shader)) {
+          issues.push({ id: newId(), severity: 'error', message: `Command "${cmd.name}" in step "${step.name}" references unknown shader "${cmd.shader}"`, location: step.name });
+        }
+        if (cmd.type === 'drawBatch' && cmd.blendState && !allResourceIds.has(cmd.blendState)) {
+          issues.push({ id: newId(), severity: 'warning', message: `Command "${cmd.name}" in step "${step.name}" references unknown blend state "${cmd.blendState}"`, location: step.name });
+        }
+      }
     }
+
     if (step.type === 'dispatchCompute' && step.shader && !allResourceIds.has(step.shader)) {
       issues.push({ id: newId(), severity: 'error', message: `Step "${step.name}" references unknown shader "${step.shader}"`, location: step.name });
+    }
+    if (step.type === 'dispatchRayTracing' && step.raygenShader && !allResourceIds.has(step.raygenShader)) {
+      issues.push({ id: newId(), severity: 'error', message: `Step "${step.name}" references unknown raygen shader "${step.raygenShader}"`, location: step.name });
     }
     if ((step.type === 'copyImage' || step.type === 'blitImage' || step.type === 'resolveImage')) {
       if (step.source && !allResourceIds.has(step.source)) {

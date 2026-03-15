@@ -17,7 +17,6 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../../state/store';
-import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import type { Pass, Timeline, TimelineType } from '../../types';
 
@@ -91,8 +90,6 @@ function PassRow({ pass, timelineId }: { pass: Pass; timelineId: string }) {
       <div className="flex items-center gap-1.5">
         <button {...attributes} {...listeners} onClick={(e) => e.stopPropagation()}
           className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing text-xs shrink-0">⠿</button>
-
-        <Badge value={pass.kind} />
 
         {editing ? (
           <input ref={inputRef} value={editName} onChange={(e) => setEditName(e.target.value)}

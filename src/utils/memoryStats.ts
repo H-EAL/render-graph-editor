@@ -112,12 +112,11 @@ export function computeMemStats(
 
   // Pipeline overview
   const passes = Object.values(pipeline.passes);
-  const byKind: Record<string, number> = {};
   let conditional = 0;
   for (const p of passes) {
-    byKind[p.kind] = (byKind[p.kind] ?? 0) + 1;
     if (p.conditions.length > 0) conditional++;
   }
+  const byKind: Record<string, number> = {};
 
   const shadersByStage: Record<string, number> = {};
   for (const sh of resources.shaders) {

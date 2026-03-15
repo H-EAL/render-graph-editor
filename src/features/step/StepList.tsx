@@ -19,23 +19,22 @@ import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../../state/store';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
+import { RasterStepBlock } from './RasterStepBlock';
 import type { PassId, StepId, StepType } from '../../types';
 
 const STEP_TYPES: { type: StepType; label: string }[] = [
-  { type: 'drawBatch', label: 'Draw Batch' },
-  { type: 'drawBatchWithMaterials', label: 'Draw Batch (Materials)' },
-  { type: 'dispatchCompute', label: 'Dispatch Compute' },
-  { type: 'dispatchRayTracing', label: 'Dispatch Ray Tracing' },
-  { type: 'drawFullscreen', label: 'Draw Fullscreen' },
-  { type: 'copyImage', label: 'Copy Image' },
-  { type: 'blitImage', label: 'Blit Image' },
-  { type: 'resolveImage', label: 'Resolve Image' },
-  { type: 'clearImages', label: 'Clear Images' },
-  { type: 'fillBuffer', label: 'Fill Buffer' },
-  { type: 'generateMipChain', label: 'Generate Mip Chain' },
-  { type: 'viewport', label: 'Viewport' },
-  { type: 'drawDebugLines', label: 'Draw Debug Lines' },
+  { type: 'raster',              label: 'Raster' },
+  { type: 'dispatchCompute',     label: 'Dispatch Compute' },
+  { type: 'dispatchRayTracing',  label: 'Dispatch Ray Tracing' },
+  { type: 'copyImage',           label: 'Copy Image' },
+  { type: 'blitImage',           label: 'Blit Image' },
+  { type: 'resolveImage',        label: 'Resolve Image' },
+  { type: 'clearImages',         label: 'Clear Images' },
+  { type: 'fillBuffer',          label: 'Fill Buffer' },
+  { type: 'generateMipChain',    label: 'Generate Mip Chain' },
 ];
+
+// ─── Generic step row (non-raster) ───────────────────────────────────────────
 
 interface StepRowProps {
   passId: PassId;
@@ -104,6 +103,8 @@ function StepRow({ passId, stepId }: StepRowProps) {
   );
 }
 
+// ─── Step list wrapper ────────────────────────────────────────────────────────
+
 interface StepListProps {
   passId: PassId;
 }
@@ -169,9 +170,13 @@ export function StepList({ passId }: StepListProps) {
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={pass.steps} strategy={verticalListSortingStrategy}>
-              {pass.steps.map((sid) => (
-                <StepRow key={sid} passId={passId} stepId={sid} />
-              ))}
+              {pass.steps.map((sid) => {
+                const step = pipeline.steps[sid];
+                if (step?.type === 'raster') {
+                  return <RasterStepBlock key={sid} passId={passId} stepId={sid} />;
+                }
+                return <StepRow key={sid} passId={passId} stepId={sid} />;
+              })}
             </SortableContext>
           </DndContext>
         )}
