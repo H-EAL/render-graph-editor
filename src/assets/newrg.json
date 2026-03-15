@@ -1,0 +1,3659 @@
+{
+  "pipeline": {
+    "id": "pipeline-default-pbr",
+    "name": "default pbr render graph",
+    "version": 2,
+    "timelines": [
+      {
+        "id": "tl-graphics",
+        "name": "Graphics",
+        "type": "graphics",
+        "passIds": [
+          "pass-info",
+          "pass-picking",
+          "pass-background",
+          "pass-ao",
+          "pass-light-clustering",
+          "pass-decals",
+          "pass-selection-outlines",
+          "pass-main-opaque",
+          "pass-transparent",
+          "pass-reflections-aa",
+          "pass-volumetric-dof-bloom-grade",
+          "pass-point-clouds",
+          "pass-grid",
+          "pass-output"
+        ]
+      }
+    ],
+    "passes": {
+      "pass-info": {
+        "id": "pass-info",
+        "name": "INFO",
+        "kind": "raster",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [
+          "opaque"
+        ],
+        "notes": "Initial info/depth pass from the authored INFO render pass.",
+        "rasterAttachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-info-vs-position",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "target": "rt-info-vs-normal",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-info-depth",
+            "loadOp": "clear",
+            "storeOp": "store",
+            "clearValue": 1
+          }
+        },
+        "reads": [],
+        "writes": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal",
+          "rt-info-depth"
+        ],
+        "steps": [
+          "step-info-viewport",
+          "step-info-static-single-prepass",
+          "step-info-static-double-prepass",
+          "step-info-skinned-single-prepass",
+          "step-info-skinned-double-prepass",
+          "step-info-static-single",
+          "step-info-static-double",
+          "step-info-skinned-single",
+          "step-info-skinned-double"
+        ]
+      },
+      "pass-picking": {
+        "id": "pass-picking",
+        "name": "PICKING Pass",
+        "kind": "raster",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [
+          "transparent"
+        ],
+        "notes": "Picking / world-space info pass from the authored PICKING Pass render pass.",
+        "rasterAttachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-ws-position",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "target": "rt-ws-normal",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-info-depth",
+            "loadOp": "load",
+            "storeOp": "store",
+            "clearValue": 1
+          }
+        },
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-ws-position",
+          "rt-ws-normal"
+        ],
+        "steps": [
+          "step-picking-viewport",
+          "step-picking-single-prepass",
+          "step-picking-double-prepass",
+          "step-picking-skinned-single-prepass",
+          "step-picking-skinned-double-prepass",
+          "step-picking-single",
+          "step-picking-double",
+          "step-picking-skinned-single",
+          "step-picking-skinned-double"
+        ]
+      },
+      "pass-background": {
+        "id": "pass-background",
+        "name": "Background & Environment",
+        "kind": "compute",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Collapsed singleton background/environment branch: clear resolved color, gradient, skybox, atmosphere, and optional info copy.",
+        "reads": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal"
+        ],
+        "writes": [
+          "rt-resolved-color",
+          "rt-ws-position",
+          "rt-ws-normal",
+          "rt-depth-backup"
+        ],
+        "steps": [
+          "step-clear-resolved-color-no-bg",
+          "step-clear-resolved-color-env",
+          "step-spherical-gradient",
+          "step-skybox-grounded",
+          "step-skybox",
+          "step-atmosphere",
+          "step-backup-depth",
+          "step-copy-info-vs-to-ws"
+        ]
+      },
+      "pass-ao": {
+        "id": "pass-ao",
+        "name": "Ambient Occlusion",
+        "kind": "compute",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Collapsed RT AO / HBAO branch plus AO history maintenance.",
+        "reads": [
+          "rt-info-depth",
+          "rt-ws-normal",
+          "rt-ao-history"
+        ],
+        "writes": [
+          "rt-ssdo",
+          "rt-hbao",
+          "rt-ao-history"
+        ],
+        "steps": [
+          "step-rt-ao-dispatch",
+          "step-rt-ao-temporal",
+          "step-clear-ao-history",
+          "step-clear-ao",
+          "step-hbao-half",
+          "step-hbao-upsample",
+          "step-hbao-bilateral-half",
+          "step-hbao-blit-half",
+          "step-hbao-full",
+          "step-hbao-bilateral-full",
+          "step-hbao-upsample-full"
+        ]
+      },
+      "pass-light-clustering": {
+        "id": "pass-light-clustering",
+        "name": "Light Clustering",
+        "kind": "compute",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [
+          "lightClustering"
+        ],
+        "notes": "Depth pyramid / clustering / visualization collapse.",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-maxmip-lod3-depth-cpu"
+        ],
+        "steps": [
+          "step-maxmip8-inv-z",
+          "step-compute-cluster-lights",
+          "step-show-light-clusters",
+          "step-show-light-cascades"
+        ]
+      },
+      "pass-decals": {
+        "id": "pass-decals",
+        "name": "Decals",
+        "kind": "compute",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Clear decal surfaces or dispatch decals compute depending on the decals toggle.",
+        "reads": [
+          "rt-info-vs-position"
+        ],
+        "writes": [
+          "rt-decal-albedo-metalness",
+          "rt-decal-emission-roughness",
+          "rt-decal-component-influence"
+        ],
+        "steps": [
+          "step-clear-decals-enabled",
+          "step-dispatch-decals",
+          "step-clear-decals-disabled"
+        ]
+      },
+      "pass-selection-outlines": {
+        "id": "pass-selection-outlines",
+        "name": "Selection Outlines",
+        "kind": "raster",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [
+          "selectionOutlines"
+        ],
+        "notes": "Collapsed both selection buffer variants plus final AA compose.",
+        "rasterAttachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-selection",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-selection-depth",
+            "loadOp": "clear",
+            "storeOp": "store",
+            "clearValue": 1
+          }
+        },
+        "reads": [],
+        "writes": [
+          "rt-selection",
+          "rt-selection-depth",
+          "rt-resolved-color"
+        ],
+        "steps": [
+          "step-selection-viewport-single",
+          "step-selection-draw-static-single-a",
+          "step-selection-draw-static-single-b",
+          "step-selection-viewport-all",
+          "step-selection-draw-static-all-a",
+          "step-selection-draw-static-all-b",
+          "step-compose-selection-aa"
+        ]
+      },
+      "pass-main-opaque": {
+        "id": "pass-main-opaque",
+        "name": "Main Opaque",
+        "kind": "raster",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [
+          "opaque"
+        ],
+        "notes": "Collapsed the two duplicate MAIN OPAQUE MSAA passes (reflectEnvironmentSetting on/off branches) into one representative pass.",
+        "rasterAttachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-color-msaa",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                -1,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "target": "rt-specular-msaa",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "target": "rt-vs-normals-msaa",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-depth-msaa",
+            "loadOp": "clear",
+            "storeOp": "store",
+            "clearValue": 1
+          }
+        },
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-color-msaa",
+          "rt-specular-msaa",
+          "rt-vs-normals-msaa",
+          "rt-depth-msaa",
+          "rt-resolved-color",
+          "rt-resolved-specular",
+          "rt-info-vs-normal"
+        ],
+        "steps": [
+          "step-main-opaque-viewport",
+          "step-main-opaque-single-prepass",
+          "step-main-opaque-double-prepass",
+          "step-main-opaque-skinned-single-prepass",
+          "step-main-opaque-skinned-double-prepass",
+          "step-main-copy-background",
+          "step-main-opaque-single-materials",
+          "step-main-opaque-double-materials",
+          "step-main-debug"
+        ]
+      },
+      "pass-transparent": {
+        "id": "pass-transparent",
+        "name": "Transparent",
+        "kind": "raster",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Collapsed stochastic and regular transparent branches plus final transparent compose.",
+        "rasterAttachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-transparent-accum",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "target": "rt-transparent-reveal",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-depth-msaa",
+            "loadOp": "load",
+            "storeOp": "store",
+            "clearValue": 1
+          }
+        },
+        "reads": [
+          "rt-depth-msaa",
+          "rt-depth-backup"
+        ],
+        "writes": [
+          "rt-transparent-accum",
+          "rt-transparent-reveal",
+          "rt-resolved-accum",
+          "rt-resolved-reveal",
+          "rt-stochastic-transparent-alpha",
+          "rt-stochastic-transparent-color",
+          "rt-resolved-stochastic-transparent-color",
+          "rt-resolved-color"
+        ],
+        "steps": [
+          "step-transparent-ground-plane",
+          "step-voxel-compute",
+          "step-apply-fog",
+          "step-transparent-alpha-accum-viewport",
+          "step-transparent-alpha-accum-draw",
+          "step-transparent-atoc-viewport",
+          "step-transparent-atoc-draw",
+          "step-transparent-stochastic-color-viewport",
+          "step-transparent-stochastic-color-draw",
+          "step-transparent-regular-viewport",
+          "step-transparent-regular-draw",
+          "step-compose-transparent"
+        ]
+      },
+      "pass-reflections-aa": {
+        "id": "pass-reflections-aa",
+        "name": "Reflections & AA",
+        "kind": "compute",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Collapsed SSR, specular filtering, reflection compose, DLAA, FXAA, TAA, sharpen, edge outlines, pointer highlight, remove background, and metallic/roughness visualization.",
+        "reads": [
+          "rt-resolved-color",
+          "rt-resolved-specular",
+          "rt-taa-history"
+        ],
+        "writes": [
+          "rt-resolved-color",
+          "rt-resolved-specular",
+          "rt-taa-history",
+          "rt-rgba32-transient",
+          "rt-rgba16-transient",
+          "rt-rgba8-transient"
+        ],
+        "steps": [
+          "step-ssr",
+          "step-ssr-generate-mips",
+          "step-apply-ssr-reflections",
+          "step-filter-reflections",
+          "step-blit-specular-filter",
+          "step-apply-reflections",
+          "step-dlaa",
+          "step-blit-dlaa",
+          "step-fxaa",
+          "step-fxaa-debug",
+          "step-blit-fxaa",
+          "step-taa-sharpen-blit",
+          "step-taa-sharpen-edge-aware",
+          "step-taa",
+          "step-taa-static",
+          "step-blit-taa",
+          "step-clear-taa-history",
+          "step-edge-outlines",
+          "step-pointer-highlight",
+          "step-extract-metallic-roughness",
+          "step-remove-background"
+        ]
+      },
+      "pass-volumetric-dof-bloom-grade": {
+        "id": "pass-volumetric-dof-bloom-grade",
+        "name": "Volumetric, DoF, Bloom & Color Grading",
+        "kind": "compute",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Collapsed volumetric lighting, DoF, bloom pyramid, color grading, and optional sharpen.",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-downsample-1",
+          "rt-downsample-2",
+          "rt-downsample-3",
+          "rt-downsample-4",
+          "rt-downsample-5",
+          "rt-downsample-6",
+          "rt-downsample-7",
+          "rt-downsample-8",
+          "rt-downsample-9",
+          "rt-resolved-color"
+        ],
+        "steps": [
+          "step-volumetric-full",
+          "step-volumetric-downsample",
+          "step-volumetric-upsample",
+          "step-volumetric-combine",
+          "step-volumetric-lowres",
+          "step-volumetric-lowres-upsample",
+          "step-dof-downsample",
+          "step-dof-hblur-1",
+          "step-dof-vblur-1",
+          "step-dof-hblur-2",
+          "step-dof-vblur-2",
+          "step-dof-composite",
+          "step-bloom-downsample-1",
+          "step-bloom-downsample-2",
+          "step-bloom-downsample-3",
+          "step-bloom-downsample-4",
+          "step-bloom-downsample-5",
+          "step-bloom-downsample-6",
+          "step-bloom-downsample-7",
+          "step-bloom-downsample-8",
+          "step-bloom-downsample-9",
+          "step-bloom-upsample-9",
+          "step-bloom-upsample-8",
+          "step-bloom-upsample-7",
+          "step-bloom-upsample-6",
+          "step-bloom-upsample-5",
+          "step-bloom-upsample-4",
+          "step-bloom-upsample-3",
+          "step-bloom-upsample-2",
+          "step-bloom-upsample-1",
+          "step-bloom-combine",
+          "step-color-grade-bg",
+          "step-color-grade-no-bg",
+          "step-sharpen-blit",
+          "step-sharpen",
+          "step-sharpen-edge-aware"
+        ]
+      },
+      "pass-point-clouds": {
+        "id": "pass-point-clouds",
+        "name": "Point Clouds",
+        "kind": "compute",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [
+          "pointClouds"
+        ],
+        "notes": "Point cloud clear, render, HQ path, and resolve.",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color",
+          "rt-debug-z"
+        ],
+        "steps": [
+          "step-clear-pc-color-buffer",
+          "step-clear-pc-depth-buffer",
+          "step-hq-point-cloud-depth",
+          "step-hq-point-cloud-color",
+          "step-hq-point-cloud-resolve",
+          "step-point-cloud-render",
+          "step-point-cloud-resolve"
+        ]
+      },
+      "pass-grid": {
+        "id": "pass-grid",
+        "name": "Grid",
+        "kind": "raster",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [
+          "grid"
+        ],
+        "notes": "The authored grid pass.",
+        "rasterAttachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-resolved-color",
+              "loadOp": "load",
+              "storeOp": "store",
+              "clearValue": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ]
+        },
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "steps": [
+          "step-grid-viewport",
+          "step-grid-fullscreen"
+        ]
+      },
+      "pass-output": {
+        "id": "pass-output",
+        "name": "Final Output",
+        "kind": "compute",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Final output blits / pointer-pick blits.",
+        "reads": [
+          "rt-resolved-color",
+          "rt-selection",
+          "rt-ws-normal"
+        ],
+        "writes": [],
+        "steps": [
+          "step-maxmip-1-8-inv-z",
+          "step-show-fps-bar",
+          "step-blit-color-to-output",
+          "step-blit-picking-to-output",
+          "step-blit-normals-to-output"
+        ]
+      }
+    },
+    "steps": {
+      "step-info-viewport": {
+        "id": "step-info-viewport",
+        "type": "viewport",
+        "name": "Viewport",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "opaque"
+        ],
+        "x": 0,
+        "y": 0,
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "minDepth": 0,
+        "maxDepth": 1
+      },
+      "step-info-static-single-prepass": {
+        "id": "step-info-static-single-prepass",
+        "type": "drawBatch",
+        "name": "Static Single Sided pre-pass",
+        "reads": [],
+        "writes": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal",
+          "rt-info-depth"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-info-static-double-prepass": {
+        "id": "step-info-static-double-prepass",
+        "type": "drawBatch",
+        "name": "Static Double Sided pre-pass",
+        "reads": [],
+        "writes": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal",
+          "rt-info-depth"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-info-skinned-single-prepass": {
+        "id": "step-info-skinned-single-prepass",
+        "type": "drawBatch",
+        "name": "Skinned Single Sided pre-pass",
+        "reads": [],
+        "writes": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal",
+          "rt-info-depth"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-info-skinned-double-prepass": {
+        "id": "step-info-skinned-double-prepass",
+        "type": "drawBatch",
+        "name": "Skinned Double Sided pre-pass",
+        "reads": [],
+        "writes": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal",
+          "rt-info-depth"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-info-static-single": {
+        "id": "step-info-static-single",
+        "type": "drawBatch",
+        "name": "Static Single Sided",
+        "reads": [],
+        "writes": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-info-static-double": {
+        "id": "step-info-static-double",
+        "type": "drawBatch",
+        "name": "Static Double Sided",
+        "reads": [],
+        "writes": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-info-skinned-single": {
+        "id": "step-info-skinned-single",
+        "type": "drawBatch",
+        "name": "Skinned Single Sided",
+        "reads": [],
+        "writes": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-info-skinned-double": {
+        "id": "step-info-skinned-double",
+        "type": "drawBatch",
+        "name": "Skinned Double Sided",
+        "reads": [],
+        "writes": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-picking-viewport": {
+        "id": "step-picking-viewport",
+        "type": "viewport",
+        "name": "picking viewport node",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "transparent"
+        ],
+        "x": 0,
+        "y": 0,
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "minDepth": 0,
+        "maxDepth": 1
+      },
+      "step-picking-single-prepass": {
+        "id": "step-picking-single-prepass",
+        "type": "drawBatch",
+        "name": "picking single sided all static draw pre-pass",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-ws-position",
+          "rt-ws-normal"
+        ],
+        "conditions": [
+          "transparent"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-picking-double-prepass": {
+        "id": "step-picking-double-prepass",
+        "type": "drawBatch",
+        "name": "picking double sided all static draw pre-pass",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-ws-position",
+          "rt-ws-normal"
+        ],
+        "conditions": [
+          "transparent"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-picking-skinned-single-prepass": {
+        "id": "step-picking-skinned-single-prepass",
+        "type": "drawBatch",
+        "name": "picking skinned single sided draw node pre-pass",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-ws-position",
+          "rt-ws-normal"
+        ],
+        "conditions": [
+          "transparent"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-picking-skinned-double-prepass": {
+        "id": "step-picking-skinned-double-prepass",
+        "type": "drawBatch",
+        "name": "picking skinned double sided draw node pre-pass",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-ws-position",
+          "rt-ws-normal"
+        ],
+        "conditions": [
+          "transparent"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-picking-single": {
+        "id": "step-picking-single",
+        "type": "drawBatch",
+        "name": "picking single sided all static draw",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-ws-position",
+          "rt-ws-normal"
+        ],
+        "conditions": [
+          "transparent"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-picking-double": {
+        "id": "step-picking-double",
+        "type": "drawBatch",
+        "name": "picking double sided all static draw",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-ws-position",
+          "rt-ws-normal"
+        ],
+        "conditions": [
+          "transparent"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-picking-skinned-single": {
+        "id": "step-picking-skinned-single",
+        "type": "drawBatch",
+        "name": "picking skinned single sided draw node",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-ws-position",
+          "rt-ws-normal"
+        ],
+        "conditions": [
+          "transparent"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-picking-skinned-double": {
+        "id": "step-picking-skinned-double",
+        "type": "drawBatch",
+        "name": "picking skinned double sided draw node",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-ws-position",
+          "rt-ws-normal"
+        ],
+        "conditions": [
+          "transparent"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-clear-resolved-color-no-bg": {
+        "id": "step-clear-resolved-color-no-bg",
+        "type": "clearImages",
+        "name": "clear resolved color (displayBG=false)",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "!displayBackground"
+        ],
+        "targets": []
+      },
+      "step-clear-resolved-color-env": {
+        "id": "step-clear-resolved-color-env",
+        "type": "clearImages",
+        "name": "clear resolved color (env)",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "displayBackground"
+        ],
+        "targets": []
+      },
+      "step-spherical-gradient": {
+        "id": "step-spherical-gradient",
+        "type": "dispatchCompute",
+        "name": "Spherical Gradient",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "displayBackground",
+          "gradient"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-skybox-grounded": {
+        "id": "step-skybox-grounded",
+        "type": "dispatchCompute",
+        "name": "Skybox (Grounded)",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "displayBackground",
+          "skybox",
+          "skyboxGrounded"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-skybox": {
+        "id": "step-skybox",
+        "type": "dispatchCompute",
+        "name": "Skybox",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "displayBackground",
+          "skybox",
+          "!skyboxGrounded"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-atmosphere": {
+        "id": "step-atmosphere",
+        "type": "dispatchCompute",
+        "name": "Atmosphere",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "displayBackground",
+          "atmosphere"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-backup-depth": {
+        "id": "step-backup-depth",
+        "type": "blitImage",
+        "name": "Backup Depth",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-depth-backup"
+        ],
+        "conditions": [
+          "stochasticTransparency"
+        ],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      },
+      "step-copy-info-vs-to-ws": {
+        "id": "step-copy-info-vs-to-ws",
+        "type": "dispatchCompute",
+        "name": "Copy info vs to ws",
+        "reads": [
+          "rt-info-vs-position",
+          "rt-info-vs-normal"
+        ],
+        "writes": [
+          "rt-ws-position",
+          "rt-ws-normal"
+        ],
+        "conditions": [
+          "!transparent"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-rt-ao-dispatch": {
+        "id": "step-rt-ao-dispatch",
+        "type": "dispatchRayTracing",
+        "name": "RT Dispatch Ambient Occlusion",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-ssdo"
+        ],
+        "conditions": [
+          "rayTracedAO"
+        ],
+        "raygenShader": "",
+        "width": "viewport.width",
+        "height": "viewport.height"
+      },
+      "step-rt-ao-temporal": {
+        "id": "step-rt-ao-temporal",
+        "type": "dispatchCompute",
+        "name": "RT Ambient Occlusion Temporal",
+        "reads": [
+          "rt-ssdo",
+          "rt-ao-history"
+        ],
+        "writes": [
+          "rt-ao-history"
+        ],
+        "conditions": [
+          "rayTracedAO"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-clear-ao-history": {
+        "id": "step-clear-ao-history",
+        "type": "clearImages",
+        "name": "Clear AO History RT",
+        "reads": [],
+        "writes": [
+          "rt-ao-history"
+        ],
+        "conditions": [
+          "!rayTracedAO"
+        ],
+        "targets": []
+      },
+      "step-clear-ao": {
+        "id": "step-clear-ao",
+        "type": "clearImages",
+        "name": "Clear AO RT",
+        "reads": [],
+        "writes": [
+          "rt-ssdo"
+        ],
+        "conditions": [
+          "!rayTracedAO",
+          "!hbao"
+        ],
+        "targets": []
+      },
+      "step-hbao-half": {
+        "id": "step-hbao-half",
+        "type": "dispatchCompute",
+        "name": "hbao half size",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-hbao"
+        ],
+        "conditions": [
+          "!rayTracedAO",
+          "hbao",
+          "hbaoHalfSize"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-hbao-upsample": {
+        "id": "step-hbao-upsample",
+        "type": "dispatchCompute",
+        "name": "Upsample 1",
+        "reads": [
+          "rt-hbao"
+        ],
+        "writes": [
+          "rt-ssdo"
+        ],
+        "conditions": [
+          "!rayTracedAO",
+          "hbao"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-hbao-bilateral-half": {
+        "id": "step-hbao-bilateral-half",
+        "type": "dispatchCompute",
+        "name": "bilateral filter",
+        "reads": [
+          "rt-hbao"
+        ],
+        "writes": [
+          "rt-ssdo"
+        ],
+        "conditions": [
+          "!rayTracedAO",
+          "hbao",
+          "hbaoBillateralFilter"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-hbao-blit-half": {
+        "id": "step-hbao-blit-half",
+        "type": "blitImage",
+        "name": "blit hbao",
+        "reads": [
+          "rt-hbao"
+        ],
+        "writes": [
+          "rt-ssdo"
+        ],
+        "conditions": [
+          "!rayTracedAO",
+          "hbao",
+          "hbaoBillateralFilter"
+        ],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      },
+      "step-hbao-full": {
+        "id": "step-hbao-full",
+        "type": "dispatchCompute",
+        "name": "hbao",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-hbao"
+        ],
+        "conditions": [
+          "!rayTracedAO",
+          "hbao",
+          "!hbaoHalfSize"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-maxmip8-inv-z": {
+        "id": "step-maxmip8-inv-z",
+        "type": "dispatchCompute",
+        "name": "maxmip8_inv_z",
+        "reads": [
+          "rt-info-depth"
+        ],
+        "writes": [
+          "rt-maxmip-lod3-depth-cpu"
+        ],
+        "conditions": [
+          "lightClustering"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-compute-cluster-lights": {
+        "id": "step-compute-cluster-lights",
+        "type": "dispatchCompute",
+        "name": "compute cluster lights",
+        "reads": [
+          "rt-maxmip-lod3-depth-cpu"
+        ],
+        "writes": [],
+        "conditions": [
+          "lightClustering"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-show-light-clusters": {
+        "id": "step-show-light-clusters",
+        "type": "dispatchCompute",
+        "name": "show light clusters",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "lightClustering",
+          "showLightClusters"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-show-light-cascades": {
+        "id": "step-show-light-cascades",
+        "type": "dispatchCompute",
+        "name": "show light cascades",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "showLightCascades"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-clear-decals-enabled": {
+        "id": "step-clear-decals-enabled",
+        "type": "clearImages",
+        "name": "Clear Decal Texture (only one)",
+        "reads": [],
+        "writes": [
+          "rt-decal-component-influence"
+        ],
+        "conditions": [
+          "decals"
+        ],
+        "targets": []
+      },
+      "step-dispatch-decals": {
+        "id": "step-dispatch-decals",
+        "type": "dispatchCompute",
+        "name": "Dispatch Decals Compute",
+        "reads": [
+          "rt-info-vs-position"
+        ],
+        "writes": [
+          "rt-decal-albedo-metalness",
+          "rt-decal-emission-roughness",
+          "rt-decal-component-influence"
+        ],
+        "conditions": [
+          "decals"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-clear-decals-disabled": {
+        "id": "step-clear-decals-disabled",
+        "type": "clearImages",
+        "name": "Clear Decal Texture (only one)",
+        "reads": [],
+        "writes": [
+          "rt-decal-component-influence"
+        ],
+        "conditions": [
+          "!decals"
+        ],
+        "targets": []
+      },
+      "step-selection-viewport-single": {
+        "id": "step-selection-viewport-single",
+        "type": "viewport",
+        "name": "Viewport",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "selectionOutlines",
+          "!allOutlines"
+        ],
+        "x": 0,
+        "y": 0,
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "minDepth": 0,
+        "maxDepth": 1
+      },
+      "step-selection-draw-static-single-a": {
+        "id": "step-selection-draw-static-single-a",
+        "type": "drawBatch",
+        "name": "draw outline static",
+        "reads": [],
+        "writes": [
+          "rt-selection"
+        ],
+        "conditions": [
+          "selectionOutlines",
+          "!allOutlines"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-selection-draw-static-single-b": {
+        "id": "step-selection-draw-static-single-b",
+        "type": "drawBatch",
+        "name": "draw outline static",
+        "reads": [],
+        "writes": [
+          "rt-selection"
+        ],
+        "conditions": [
+          "selectionOutlines",
+          "!allOutlines"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-selection-viewport-all": {
+        "id": "step-selection-viewport-all",
+        "type": "viewport",
+        "name": "Viewport",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "selectionOutlines",
+          "allOutlines"
+        ],
+        "x": 0,
+        "y": 0,
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "minDepth": 0,
+        "maxDepth": 1
+      },
+      "step-selection-draw-static-all-a": {
+        "id": "step-selection-draw-static-all-a",
+        "type": "drawBatch",
+        "name": "draw outline static all",
+        "reads": [],
+        "writes": [
+          "rt-selection"
+        ],
+        "conditions": [
+          "selectionOutlines",
+          "allOutlines"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-selection-draw-static-all-b": {
+        "id": "step-selection-draw-static-all-b",
+        "type": "drawBatch",
+        "name": "draw outline static all",
+        "reads": [],
+        "writes": [
+          "rt-selection"
+        ],
+        "conditions": [
+          "selectionOutlines",
+          "allOutlines"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-compose-selection-aa": {
+        "id": "step-compose-selection-aa",
+        "type": "dispatchCompute",
+        "name": "Compose AA selection outlines",
+        "reads": [
+          "rt-selection"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "selectionOutlines"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-main-opaque-viewport": {
+        "id": "step-main-opaque-viewport",
+        "type": "viewport",
+        "name": "main opaque VP",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "opaque"
+        ],
+        "x": 0,
+        "y": 0,
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "minDepth": 0,
+        "maxDepth": 1
+      },
+      "step-main-opaque-single-prepass": {
+        "id": "step-main-opaque-single-prepass",
+        "type": "drawBatch",
+        "name": "main opaque single sided pre-pass",
+        "reads": [],
+        "writes": [
+          "rt-depth-msaa"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-main-opaque-double-prepass": {
+        "id": "step-main-opaque-double-prepass",
+        "type": "drawBatch",
+        "name": "main opaque double sided pre-pass",
+        "reads": [],
+        "writes": [
+          "rt-depth-msaa"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-main-opaque-skinned-single-prepass": {
+        "id": "step-main-opaque-skinned-single-prepass",
+        "type": "drawBatch",
+        "name": "main opaque single sided pre-pass",
+        "reads": [],
+        "writes": [
+          "rt-depth-msaa"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-main-opaque-skinned-double-prepass": {
+        "id": "step-main-opaque-skinned-double-prepass",
+        "type": "drawBatch",
+        "name": "main opaque double sided pre-pass",
+        "reads": [],
+        "writes": [
+          "rt-depth-msaa"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-main-copy-background": {
+        "id": "step-main-copy-background",
+        "type": "drawFullscreen",
+        "name": "copy background texture",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-color-msaa"
+        ],
+        "conditions": [
+          "opaque",
+          "displayBackground"
+        ],
+        "shader": ""
+      },
+      "step-main-opaque-single-materials": {
+        "id": "step-main-opaque-single-materials",
+        "type": "drawBatchWithMaterials",
+        "name": "main opaque single sided",
+        "reads": [],
+        "writes": [
+          "rt-color-msaa",
+          "rt-specular-msaa",
+          "rt-vs-normals-msaa"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-main-opaque-double-materials": {
+        "id": "step-main-opaque-double-materials",
+        "type": "drawBatchWithMaterials",
+        "name": "main opaque double sided",
+        "reads": [],
+        "writes": [
+          "rt-color-msaa",
+          "rt-specular-msaa",
+          "rt-vs-normals-msaa"
+        ],
+        "conditions": [
+          "opaque"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-main-debug": {
+        "id": "step-main-debug",
+        "type": "drawDebugLines",
+        "name": "main debug",
+        "reads": [
+          "rt-depth-msaa"
+        ],
+        "writes": [
+          "rt-color-msaa"
+        ],
+        "conditions": [
+          "opaque",
+          "debugLines"
+        ],
+        "lineWidth": 1
+      },
+      "step-transparent-ground-plane": {
+        "id": "step-transparent-ground-plane",
+        "type": "dispatchCompute",
+        "name": "Transparent Ground Plane",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "transparentGroundPlane"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-voxel-compute": {
+        "id": "step-voxel-compute",
+        "type": "dispatchCompute",
+        "name": "voxel_compute_node",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "voxels"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-apply-fog": {
+        "id": "step-apply-fog",
+        "type": "dispatchCompute",
+        "name": "apply fog node",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "fog"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-transparent-alpha-accum-viewport": {
+        "id": "step-transparent-alpha-accum-viewport",
+        "type": "viewport",
+        "name": "Transparent VP",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "stochasticTransparency"
+        ],
+        "x": 0,
+        "y": 0,
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "minDepth": 0,
+        "maxDepth": 1
+      },
+      "step-transparent-alpha-accum-draw": {
+        "id": "step-transparent-alpha-accum-draw",
+        "type": "drawBatchWithMaterials",
+        "name": "Transparent Material Alpha Accum",
+        "reads": [
+          "rt-depth-backup"
+        ],
+        "writes": [
+          "rt-stochastic-transparent-alpha"
+        ],
+        "conditions": [
+          "stochasticTransparency"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-transparent-atoc-viewport": {
+        "id": "step-transparent-atoc-viewport",
+        "type": "viewport",
+        "name": "Transparent VP",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "stochasticTransparency"
+        ],
+        "x": 0,
+        "y": 0,
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "minDepth": 0,
+        "maxDepth": 1
+      },
+      "step-transparent-atoc-draw": {
+        "id": "step-transparent-atoc-draw",
+        "type": "drawBatchWithMaterials",
+        "name": "Transparent Material Stochastic",
+        "reads": [
+          "rt-depth-msaa"
+        ],
+        "writes": [
+          "rt-depth-msaa"
+        ],
+        "conditions": [
+          "stochasticTransparency"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-transparent-stochastic-color-viewport": {
+        "id": "step-transparent-stochastic-color-viewport",
+        "type": "viewport",
+        "name": "Transparent VP",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "stochasticTransparency"
+        ],
+        "x": 0,
+        "y": 0,
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "minDepth": 0,
+        "maxDepth": 1
+      },
+      "step-transparent-stochastic-color-draw": {
+        "id": "step-transparent-stochastic-color-draw",
+        "type": "drawBatchWithMaterials",
+        "name": "Transparent",
+        "reads": [
+          "rt-depth-msaa"
+        ],
+        "writes": [
+          "rt-stochastic-transparent-color"
+        ],
+        "conditions": [
+          "stochasticTransparency"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-transparent-regular-viewport": {
+        "id": "step-transparent-regular-viewport",
+        "type": "viewport",
+        "name": "Transparent VP",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "transparent"
+        ],
+        "x": 0,
+        "y": 0,
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "minDepth": 0,
+        "maxDepth": 1
+      },
+      "step-transparent-regular-draw": {
+        "id": "step-transparent-regular-draw",
+        "type": "drawBatchWithMaterials",
+        "name": "Transparent",
+        "reads": [
+          "rt-depth-msaa"
+        ],
+        "writes": [
+          "rt-transparent-accum",
+          "rt-transparent-reveal"
+        ],
+        "conditions": [
+          "transparent"
+        ],
+        "shader": "",
+        "depthTest": true,
+        "depthWrite": true,
+        "cullMode": "back"
+      },
+      "step-compose-transparent": {
+        "id": "step-compose-transparent",
+        "type": "dispatchCompute",
+        "name": "Compose Tranparent",
+        "reads": [
+          "rt-transparent-accum",
+          "rt-transparent-reveal",
+          "rt-resolved-stochastic-transparent-color"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-ssr": {
+        "id": "step-ssr",
+        "type": "dispatchCompute",
+        "name": "ssr node",
+        "reads": [
+          "rt-resolved-color",
+          "rt-depth-msaa"
+        ],
+        "writes": [
+          "rt-rgba32-transient"
+        ],
+        "conditions": [
+          "ssr"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-ssr-generate-mips": {
+        "id": "step-ssr-generate-mips",
+        "type": "generateMipChain",
+        "name": "Generate SSR Mips",
+        "reads": [
+          "rt-rgba32-transient"
+        ],
+        "writes": [
+          "rt-rgba32-transient"
+        ],
+        "conditions": [
+          "ssr"
+        ],
+        "target": "",
+        "filter": "linear"
+      },
+      "step-apply-ssr-reflections": {
+        "id": "step-apply-ssr-reflections",
+        "type": "dispatchCompute",
+        "name": "Apply SSR Reflections",
+        "reads": [
+          "rt-rgba32-transient"
+        ],
+        "writes": [
+          "rt-resolved-specular"
+        ],
+        "conditions": [
+          "ssr"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-filter-reflections": {
+        "id": "step-filter-reflections",
+        "type": "dispatchCompute",
+        "name": "Filter Reflections",
+        "reads": [
+          "rt-resolved-specular"
+        ],
+        "writes": [
+          "rt-rgba16-transient"
+        ],
+        "conditions": [
+          "filterSpecular"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-blit-specular-filter": {
+        "id": "step-blit-specular-filter",
+        "type": "blitImage",
+        "name": "blit specular filter",
+        "reads": [
+          "rt-rgba16-transient"
+        ],
+        "writes": [
+          "rt-resolved-specular"
+        ],
+        "conditions": [
+          "filterSpecular"
+        ],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      },
+      "step-apply-reflections": {
+        "id": "step-apply-reflections",
+        "type": "dispatchCompute",
+        "name": "Apply Reflections",
+        "reads": [
+          "rt-resolved-specular"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "reflection"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-dlaa": {
+        "id": "step-dlaa",
+        "type": "dispatchCompute",
+        "name": "DLAA",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-rgba16-transient"
+        ],
+        "conditions": [
+          "DLAA"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-blit-dlaa": {
+        "id": "step-blit-dlaa",
+        "type": "blitImage",
+        "name": "blit dlaa to color",
+        "reads": [
+          "rt-rgba16-transient"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "DLAA"
+        ],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      },
+      "step-fxaa": {
+        "id": "step-fxaa",
+        "type": "dispatchCompute",
+        "name": "Compute FXAA",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-rgba16-transient"
+        ],
+        "conditions": [
+          "fxaa",
+          "!fxaaDebug"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-fxaa-debug": {
+        "id": "step-fxaa-debug",
+        "type": "dispatchCompute",
+        "name": "Compute FXAA Debug",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-rgba16-transient"
+        ],
+        "conditions": [
+          "fxaa",
+          "fxaaDebug"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-blit-fxaa": {
+        "id": "step-blit-fxaa",
+        "type": "blitImage",
+        "name": "Blit anti-aliased fxaa to color",
+        "reads": [
+          "rt-rgba16-transient"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "fxaa"
+        ],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      },
+      "step-taa-sharpen-blit": {
+        "id": "step-taa-sharpen-blit",
+        "type": "blitImage",
+        "name": "Sharpen blit input to transient",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-rgba16-transient"
+        ],
+        "conditions": [
+          "taa",
+          "TAASharpen"
+        ],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      },
+      "step-taa-sharpen-edge-aware": {
+        "id": "step-taa-sharpen-edge-aware",
+        "type": "dispatchCompute",
+        "name": "Sharpen edge aware",
+        "reads": [
+          "rt-rgba16-transient"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "taa",
+          "TAASharpen"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-taa": {
+        "id": "step-taa",
+        "type": "dispatchCompute",
+        "name": "Compute TAA",
+        "reads": [
+          "rt-resolved-color",
+          "rt-taa-history"
+        ],
+        "writes": [
+          "rt-rgba16-transient",
+          "rt-taa-history"
+        ],
+        "conditions": [
+          "taa",
+          "!TAAStaticScene"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-taa-static": {
+        "id": "step-taa-static",
+        "type": "dispatchCompute",
+        "name": "Compute Static TAA",
+        "reads": [
+          "rt-resolved-color",
+          "rt-taa-history"
+        ],
+        "writes": [
+          "rt-rgba16-transient",
+          "rt-taa-history"
+        ],
+        "conditions": [
+          "taa",
+          "TAAStaticScene"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-blit-taa": {
+        "id": "step-blit-taa",
+        "type": "blitImage",
+        "name": "Blit anti-aliased taa to color",
+        "reads": [
+          "rt-rgba16-transient"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "taa"
+        ],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      },
+      "step-clear-taa-history": {
+        "id": "step-clear-taa-history",
+        "type": "clearImages",
+        "name": "clear TAA history",
+        "reads": [],
+        "writes": [
+          "rt-taa-history"
+        ],
+        "conditions": [
+          "!taa"
+        ],
+        "targets": []
+      },
+      "step-edge-outlines": {
+        "id": "step-edge-outlines",
+        "type": "dispatchCompute",
+        "name": "Compute Edge Outime",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "edgeOutlines"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-pointer-highlight": {
+        "id": "step-pointer-highlight",
+        "type": "dispatchCompute",
+        "name": "Pointer Highlight",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "pointerHighlight"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-extract-metallic-roughness": {
+        "id": "step-extract-metallic-roughness",
+        "type": "dispatchCompute",
+        "name": "Extract Metallic Roughness",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "visualizeMetallicRoughness"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-remove-background": {
+        "id": "step-remove-background",
+        "type": "dispatchCompute",
+        "name": "Remove Background Compute Pass",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "removeBackground"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-volumetric-full": {
+        "id": "step-volumetric-full",
+        "type": "dispatchCompute",
+        "name": "Volumetric Lighting",
+        "reads": [
+          "rt-depth-msaa"
+        ],
+        "writes": [
+          "rt-rgba32-transient"
+        ],
+        "conditions": [
+          "volumetricLighting",
+          "!volumetricLowerResolution"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-volumetric-downsample": {
+        "id": "step-volumetric-downsample",
+        "type": "dispatchCompute",
+        "name": "downsample volumetric",
+        "reads": [
+          "rt-rgba32-transient"
+        ],
+        "writes": [
+          "rt-rgba32-lod1-transient"
+        ],
+        "conditions": [
+          "volumetricLighting",
+          "!volumetricLowerResolution"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-volumetric-upsample": {
+        "id": "step-volumetric-upsample",
+        "type": "dispatchCompute",
+        "name": "upsample volumetric",
+        "reads": [
+          "rt-rgba32-lod1-transient"
+        ],
+        "writes": [
+          "rt-rgba32-transient-2"
+        ],
+        "conditions": [
+          "volumetricLighting",
+          "!volumetricLowerResolution"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-volumetric-combine": {
+        "id": "step-volumetric-combine",
+        "type": "dispatchCompute",
+        "name": "Upsample Combine Volumetric",
+        "reads": [
+          "rt-rgba32-transient-2"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "volumetricLighting"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-volumetric-lowres": {
+        "id": "step-volumetric-lowres",
+        "type": "dispatchCompute",
+        "name": "Volumetric Lighting",
+        "reads": [
+          "rt-depth-msaa"
+        ],
+        "writes": [
+          "rt-rgba32-lod1-transient"
+        ],
+        "conditions": [
+          "volumetricLighting",
+          "volumetricLowerResolution"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-volumetric-lowres-upsample": {
+        "id": "step-volumetric-lowres-upsample",
+        "type": "dispatchCompute",
+        "name": "Upsample Volumetric",
+        "reads": [
+          "rt-rgba32-lod1-transient"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "volumetricLighting",
+          "volumetricLowerResolution"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-dof-downsample": {
+        "id": "step-dof-downsample",
+        "type": "dispatchCompute",
+        "name": "downsample",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-downsample-1"
+        ],
+        "conditions": [
+          "depthOfField"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-dof-hblur-1": {
+        "id": "step-dof-hblur-1",
+        "type": "dispatchCompute",
+        "name": "horizontal blur",
+        "reads": [
+          "rt-downsample-1"
+        ],
+        "writes": [
+          "rt-downsample-2"
+        ],
+        "conditions": [
+          "depthOfField"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-dof-vblur-1": {
+        "id": "step-dof-vblur-1",
+        "type": "dispatchCompute",
+        "name": "vertical blur",
+        "reads": [
+          "rt-downsample-2"
+        ],
+        "writes": [
+          "rt-downsample-3"
+        ],
+        "conditions": [
+          "depthOfField"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-dof-hblur-2": {
+        "id": "step-dof-hblur-2",
+        "type": "dispatchCompute",
+        "name": "horizontal blur",
+        "reads": [
+          "rt-downsample-3"
+        ],
+        "writes": [
+          "rt-downsample-4"
+        ],
+        "conditions": [
+          "depthOfField"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-dof-vblur-2": {
+        "id": "step-dof-vblur-2",
+        "type": "dispatchCompute",
+        "name": "vertical blur",
+        "reads": [
+          "rt-downsample-4"
+        ],
+        "writes": [
+          "rt-downsample-5"
+        ],
+        "conditions": [
+          "depthOfField"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-dof-composite": {
+        "id": "step-dof-composite",
+        "type": "dispatchCompute",
+        "name": "compute dof",
+        "reads": [
+          "rt-downsample-5"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "depthOfField"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-downsample-1": {
+        "id": "step-bloom-downsample-1",
+        "type": "dispatchCompute",
+        "name": "Downsample 1",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-downsample-1"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-downsample-2": {
+        "id": "step-bloom-downsample-2",
+        "type": "dispatchCompute",
+        "name": "Downsample 2",
+        "reads": [
+          "rt-downsample-1"
+        ],
+        "writes": [
+          "rt-downsample-2"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-downsample-3": {
+        "id": "step-bloom-downsample-3",
+        "type": "dispatchCompute",
+        "name": "Downsample 3",
+        "reads": [
+          "rt-downsample-2"
+        ],
+        "writes": [
+          "rt-downsample-3"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-downsample-4": {
+        "id": "step-bloom-downsample-4",
+        "type": "dispatchCompute",
+        "name": "Downsample 4",
+        "reads": [
+          "rt-downsample-3"
+        ],
+        "writes": [
+          "rt-downsample-4"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-downsample-5": {
+        "id": "step-bloom-downsample-5",
+        "type": "dispatchCompute",
+        "name": "Downsample 5",
+        "reads": [
+          "rt-downsample-4"
+        ],
+        "writes": [
+          "rt-downsample-5"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-downsample-6": {
+        "id": "step-bloom-downsample-6",
+        "type": "dispatchCompute",
+        "name": "Downsample 6",
+        "reads": [
+          "rt-downsample-5"
+        ],
+        "writes": [
+          "rt-downsample-6"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-downsample-7": {
+        "id": "step-bloom-downsample-7",
+        "type": "dispatchCompute",
+        "name": "Downsample 7",
+        "reads": [
+          "rt-downsample-6"
+        ],
+        "writes": [
+          "rt-downsample-7"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-downsample-8": {
+        "id": "step-bloom-downsample-8",
+        "type": "dispatchCompute",
+        "name": "Downsample 8",
+        "reads": [
+          "rt-downsample-7"
+        ],
+        "writes": [
+          "rt-downsample-8"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-downsample-9": {
+        "id": "step-bloom-downsample-9",
+        "type": "dispatchCompute",
+        "name": "Downsample 9",
+        "reads": [
+          "rt-downsample-8"
+        ],
+        "writes": [
+          "rt-downsample-9"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-upsample-9": {
+        "id": "step-bloom-upsample-9",
+        "type": "dispatchCompute",
+        "name": "Upsample 9",
+        "reads": [
+          "rt-downsample-9"
+        ],
+        "writes": [
+          "rt-downsample-8"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-upsample-8": {
+        "id": "step-bloom-upsample-8",
+        "type": "dispatchCompute",
+        "name": "Upsample 8",
+        "reads": [
+          "rt-downsample-8"
+        ],
+        "writes": [
+          "rt-downsample-7"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-upsample-7": {
+        "id": "step-bloom-upsample-7",
+        "type": "dispatchCompute",
+        "name": "Upsample 7",
+        "reads": [
+          "rt-downsample-7"
+        ],
+        "writes": [
+          "rt-downsample-6"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-upsample-6": {
+        "id": "step-bloom-upsample-6",
+        "type": "dispatchCompute",
+        "name": "Upsample 6",
+        "reads": [
+          "rt-downsample-6"
+        ],
+        "writes": [
+          "rt-downsample-5"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-upsample-5": {
+        "id": "step-bloom-upsample-5",
+        "type": "dispatchCompute",
+        "name": "Upsample 5",
+        "reads": [
+          "rt-downsample-5"
+        ],
+        "writes": [
+          "rt-downsample-4"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-upsample-4": {
+        "id": "step-bloom-upsample-4",
+        "type": "dispatchCompute",
+        "name": "Upsample 4",
+        "reads": [
+          "rt-downsample-4"
+        ],
+        "writes": [
+          "rt-downsample-3"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-upsample-3": {
+        "id": "step-bloom-upsample-3",
+        "type": "dispatchCompute",
+        "name": "Upsample 3",
+        "reads": [
+          "rt-downsample-3"
+        ],
+        "writes": [
+          "rt-downsample-2"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-upsample-2": {
+        "id": "step-bloom-upsample-2",
+        "type": "dispatchCompute",
+        "name": "Upsample 2",
+        "reads": [
+          "rt-downsample-2"
+        ],
+        "writes": [
+          "rt-downsample-1"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-upsample-1": {
+        "id": "step-bloom-upsample-1",
+        "type": "dispatchCompute",
+        "name": "Upsample 1",
+        "reads": [
+          "rt-downsample-1"
+        ],
+        "writes": [
+          "rt-rgba16-transient"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-bloom-combine": {
+        "id": "step-bloom-combine",
+        "type": "dispatchCompute",
+        "name": "Combine bloom",
+        "reads": [
+          "rt-rgba16-transient"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "bloom"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-color-grade-bg": {
+        "id": "step-color-grade-bg",
+        "type": "dispatchCompute",
+        "name": "Full Color Grading",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "colorGrading",
+          "displayBackground"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-color-grade-no-bg": {
+        "id": "step-color-grade-no-bg",
+        "type": "dispatchCompute",
+        "name": "Full Color Grading no bg",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "colorGrading",
+          "!displayBackground"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-sharpen-blit": {
+        "id": "step-sharpen-blit",
+        "type": "blitImage",
+        "name": "Sharpen blit input to transient",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-rgba16-transient"
+        ],
+        "conditions": [
+          "sharpen"
+        ],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      },
+      "step-sharpen": {
+        "id": "step-sharpen",
+        "type": "dispatchCompute",
+        "name": "Sharpen",
+        "reads": [
+          "rt-rgba16-transient"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "sharpen",
+          "!sharpenEdgeAware"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-sharpen-edge-aware": {
+        "id": "step-sharpen-edge-aware",
+        "type": "dispatchCompute",
+        "name": "Sharpen edge aware",
+        "reads": [
+          "rt-rgba16-transient"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "sharpen",
+          "sharpenEdgeAware"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-clear-pc-color-buffer": {
+        "id": "step-clear-pc-color-buffer",
+        "type": "fillBuffer",
+        "name": "Clear PC color buffer",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "pointClouds"
+        ],
+        "target": "",
+        "value": 0
+      },
+      "step-clear-pc-depth-buffer": {
+        "id": "step-clear-pc-depth-buffer",
+        "type": "fillBuffer",
+        "name": "Clear PC depth buffer",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "pointClouds",
+          "highQuality"
+        ],
+        "target": "",
+        "value": 0
+      },
+      "step-hq-point-cloud-depth": {
+        "id": "step-hq-point-cloud-depth",
+        "type": "dispatchCompute",
+        "name": "hq point cloud depth",
+        "reads": [],
+        "writes": [
+          "rt-debug-z"
+        ],
+        "conditions": [
+          "pointClouds",
+          "highQuality"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-hq-point-cloud-color": {
+        "id": "step-hq-point-cloud-color",
+        "type": "dispatchCompute",
+        "name": "hq point cloud color",
+        "reads": [
+          "rt-debug-z"
+        ],
+        "writes": [
+          "rt-rgba16-transient"
+        ],
+        "conditions": [
+          "pointClouds",
+          "highQuality"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-hq-point-cloud-resolve": {
+        "id": "step-hq-point-cloud-resolve",
+        "type": "dispatchCompute",
+        "name": "hq point cloud resolve",
+        "reads": [
+          "rt-rgba16-transient"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "pointClouds",
+          "highQuality"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-point-cloud-render": {
+        "id": "step-point-cloud-render",
+        "type": "dispatchCompute",
+        "name": "Render Point Cloud",
+        "reads": [],
+        "writes": [
+          "rt-rgba16-transient"
+        ],
+        "conditions": [
+          "pointClouds",
+          "!highQuality"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-point-cloud-resolve": {
+        "id": "step-point-cloud-resolve",
+        "type": "dispatchCompute",
+        "name": "Resolve Point Cloud",
+        "reads": [
+          "rt-rgba16-transient"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "pointClouds",
+          "!highQuality"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-grid-viewport": {
+        "id": "step-grid-viewport",
+        "type": "viewport",
+        "name": "Grid VP",
+        "reads": [],
+        "writes": [],
+        "conditions": [
+          "grid"
+        ],
+        "x": 0,
+        "y": 0,
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "minDepth": 0,
+        "maxDepth": 1
+      },
+      "step-grid-fullscreen": {
+        "id": "step-grid-fullscreen",
+        "type": "drawFullscreen",
+        "name": "draw bufferless grid quad",
+        "reads": [],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "grid"
+        ],
+        "shader": ""
+      },
+      "step-maxmip-1-8-inv-z": {
+        "id": "step-maxmip-1-8-inv-z",
+        "type": "dispatchCompute",
+        "name": "maxmip_1_8_inv_z",
+        "reads": [
+          "rt-depth-msaa"
+        ],
+        "writes": [
+          "rt-maxmip-lod3-depth-cpu"
+        ],
+        "conditions": [],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-show-fps-bar": {
+        "id": "step-show-fps-bar",
+        "type": "dispatchCompute",
+        "name": "show fps bar",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [
+          "rt-resolved-color"
+        ],
+        "conditions": [
+          "FPSBar"
+        ],
+        "shader": "",
+        "groupsX": 1,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-blit-color-to-output": {
+        "id": "step-blit-color-to-output",
+        "type": "blitImage",
+        "name": "Blit color to output target",
+        "reads": [
+          "rt-resolved-color"
+        ],
+        "writes": [],
+        "conditions": [],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      },
+      "step-blit-picking-to-output": {
+        "id": "step-blit-picking-to-output",
+        "type": "blitImage",
+        "name": "Blit picking to output target",
+        "reads": [
+          "rt-selection"
+        ],
+        "writes": [],
+        "conditions": [],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      },
+      "step-blit-normals-to-output": {
+        "id": "step-blit-normals-to-output",
+        "type": "blitImage",
+        "name": "Blit normals to output target",
+        "reads": [
+          "rt-ws-normal"
+        ],
+        "writes": [],
+        "conditions": [],
+        "source": "",
+        "destination": "",
+        "filter": "linear"
+      }
+    }
+  },
+  "resources": {
+    "renderTargets": [
+      {
+        "id": "rt-info-vs-position",
+        "name": "info_vs_position",
+        "format": "rgba32f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-info-vs-normal",
+        "name": "info_vs_normal",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-info-depth",
+        "name": "info_depth",
+        "format": "d32f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-ws-position",
+        "name": "ws_position_rt",
+        "format": "rgba32f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-ws-normal",
+        "name": "ws_normal_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-selection",
+        "name": "selection_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-selection-depth",
+        "name": "selection_depth",
+        "format": "d32f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-ssdo",
+        "name": "ssdo_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-decal-albedo-metalness",
+        "name": "decal_albedo_metalness",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-decal-emission-roughness",
+        "name": "decal_emission_roughness",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-decal-component-influence",
+        "name": "decal_component_influence",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-hbao",
+        "name": "hbao_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-color-msaa",
+        "name": "color_msaa",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-specular-msaa",
+        "name": "specular_msaa",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-depth-msaa",
+        "name": "depth_msaa",
+        "format": "d32f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-resolved-color",
+        "name": "resolved_color",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-resolved-specular",
+        "name": "resolved_specular",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-vs-normals-msaa",
+        "name": "vs_normals_msaa",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-transparent-accum",
+        "name": "transparent_accum",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-transparent-reveal",
+        "name": "transparent_reveal",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-resolved-accum",
+        "name": "resolved_accum",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-resolved-reveal",
+        "name": "resolved_reveal",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-taa-history",
+        "name": "taa_history",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-downsample-1",
+        "name": "downsample_1",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-downsample-2",
+        "name": "downsample_2",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-downsample-3",
+        "name": "downsample_3",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-downsample-4",
+        "name": "downsample_4",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-downsample-5",
+        "name": "downsample_5",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-downsample-6",
+        "name": "downsample_6",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-downsample-7",
+        "name": "downsample_7",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-downsample-8",
+        "name": "downsample_8",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-downsample-9",
+        "name": "downsample_9",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-maxmip-lod3-depth-cpu",
+        "name": "maxmip_lod3_depth_cpu",
+        "format": "d32f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-rgba32-transient",
+        "name": "rgba32_transient_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-rgba16-transient",
+        "name": "rgba16_transient_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-rgba32-lod1-transient",
+        "name": "rgba32_lod1_transient_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-rgba32-transient-2",
+        "name": "rgba32_transient_rt_2",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-ao-history",
+        "name": "rt_ao_history_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-rgba8-transient",
+        "name": "rgba8_transient_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-stochastic-transparent-alpha",
+        "name": "stochastic_transparent_alpha_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-stochastic-transparent-color",
+        "name": "stochastic_transparent_color_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-resolved-stochastic-transparent-color",
+        "name": "resolved_stochastic_transparent_color_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-depth-backup",
+        "name": "depth_rt_bak",
+        "format": "d32f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      },
+      {
+        "id": "rt-debug-z",
+        "name": "debug_z_rt",
+        "format": "rgba16f",
+        "width": "viewport.width",
+        "height": "viewport.height",
+        "mips": 1,
+        "layers": 1
+      }
+    ],
+    "buffers": [],
+    "blendStates": [
+      {
+        "id": "blend-opaque",
+        "name": "opaque",
+        "enabled": false,
+        "srcColor": "one",
+        "dstColor": "zero",
+        "colorOp": "add",
+        "srcAlpha": "one",
+        "dstAlpha": "zero",
+        "alphaOp": "add"
+      },
+      {
+        "id": "blend-add-selected-colors",
+        "name": "add selected colors",
+        "enabled": false,
+        "srcColor": "one",
+        "dstColor": "zero",
+        "colorOp": "add",
+        "srcAlpha": "one",
+        "dstAlpha": "zero",
+        "alphaOp": "add"
+      },
+      {
+        "id": "blend-stochastic-transparent-add",
+        "name": "stochastic_transparent_add",
+        "enabled": false,
+        "srcColor": "one",
+        "dstColor": "zero",
+        "colorOp": "add",
+        "srcAlpha": "one",
+        "dstAlpha": "zero",
+        "alphaOp": "add"
+      },
+      {
+        "id": "blend-stochastic-transparent-mult",
+        "name": "stochastic_transparent_mult",
+        "enabled": false,
+        "srcColor": "one",
+        "dstColor": "zero",
+        "colorOp": "add",
+        "srcAlpha": "one",
+        "dstAlpha": "zero",
+        "alphaOp": "add"
+      }
+    ],
+    "shaders": [],
+    "inputParameters": [
+      {
+        "id": "param-opaque",
+        "name": "opaque",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-transparent",
+        "name": "transparent",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-display-background",
+        "name": "displayBackground",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-gradient",
+        "name": "gradient",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-skybox",
+        "name": "skybox",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-atmosphere",
+        "name": "atmosphere",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-ray-traced-ao",
+        "name": "rayTracedAO",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-hbao",
+        "name": "hbao",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-light-clustering",
+        "name": "lightClustering",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-decals",
+        "name": "decals",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-selection-outlines",
+        "name": "selectionOutlines",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-grid",
+        "name": "grid",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-bloom",
+        "name": "bloom",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-taa",
+        "name": "taa",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-fxaa",
+        "name": "fxaa",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-dlaa",
+        "name": "DLAA",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-color-grading",
+        "name": "colorGrading",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-point-clouds",
+        "name": "pointClouds",
+        "type": "bool",
+        "defaultValue": "false"
+      },
+      {
+        "id": "param-debug-lines",
+        "name": "debugLines",
+        "type": "bool",
+        "defaultValue": "false"
+      }
+    ]
+  }
+}
