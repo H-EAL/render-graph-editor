@@ -224,8 +224,6 @@ Sections:
 
 **Resources** — Per-step reads and writes (more granular than the pass-level lists).
 
-**Conditions** — Step-level condition flags.
-
 ---
 
 ### Resource Inspector

@@ -21,13 +21,49 @@ const NODE_H          = 36;
 const BAR_H           = 24;   // action-bar height above the node
 const COL_GAP         = 44;
 const COL_W           = NODE_W + COL_GAP;
-const ROW_H           = 92;
+const ROW_H           = 114;
 const LABEL_W         = 152;
 const PAD_T           = 14;
 const PAD_B           = 20;
 const ADD_W           = 80;
 const OVERLAY_H       = 26;
 const RESOURCE_ZONE_H = 22;  // always-visible resource section header
+const STEPS_STRIP_H   = 16;  // step chips row below pass node
+
+// ─── Step chip config ─────────────────────────────────────────────────────────
+
+const STEP_ABBR: Record<string, string> = {
+  drawBatch:              'DB',
+  drawBatchWithMaterials: 'DBM',
+  dispatchCompute:        'DC',
+  dispatchRayTracing:     'DRT',
+  drawFullscreen:         'FS',
+  copyImage:              'CP',
+  blitImage:              'BL',
+  resolveImage:           'RS',
+  clearImages:            'CLR',
+  fillBuffer:             'FB',
+  generateMipChain:       'MIP',
+  viewport:               'VP',
+  drawDebugLines:         'DBG',
+};
+
+// Mirrors the timeline type colour pattern: draw→blue, compute→green, rt→violet, transfer→orange, misc→zinc
+const STEP_CHIP_CLS: Record<string, string> = {
+  drawBatch:              'bg-blue-900/70 text-blue-300 border-blue-800/50',
+  drawBatchWithMaterials: 'bg-blue-900/60 text-blue-400 border-blue-800/40',
+  drawFullscreen:         'bg-blue-900/50 text-blue-400 border-blue-800/40',
+  drawDebugLines:         'bg-blue-900/40 text-blue-500 border-blue-800/30',
+  dispatchCompute:        'bg-emerald-900/70 text-emerald-300 border-emerald-800/50',
+  dispatchRayTracing:     'bg-violet-900/70 text-violet-300 border-violet-800/50',
+  copyImage:              'bg-orange-900/70 text-orange-300 border-orange-800/50',
+  blitImage:              'bg-orange-900/60 text-orange-400 border-orange-800/40',
+  resolveImage:           'bg-orange-900/60 text-orange-400 border-orange-800/40',
+  clearImages:            'bg-red-900/60 text-red-400 border-red-800/40',
+  fillBuffer:             'bg-amber-900/60 text-amber-400 border-amber-800/40',
+  generateMipChain:       'bg-orange-900/50 text-orange-500 border-orange-800/30',
+  viewport:               'bg-zinc-700/60 text-zinc-400 border-zinc-600/40',
+};
 
 // ─── Timeline colour config ────────────────────────────────────────────────────
 
@@ -1124,24 +1160,8 @@ export function PipelineTimelineView() {
               return (
                 <div key={passId}
                   style={{ transform: isDragging ? `translateX(${translateX}px)` : undefined, zIndex: isDragging ? 50 : undefined }}>
-                  <div className="absolute group/node"
-                    style={{ left: x, top: y - BAR_H, width: NODE_W, height: NODE_H + BAR_H, opacity: isDimmed ? 0.2 : 1 }}>
-                    {/* Action bar */}
-                    <div
-                      className="invisible group-hover/node:visible flex items-center justify-end gap-0 bg-zinc-800/95 border border-zinc-600/50 rounded-t px-1"
-                      style={{ height: BAR_H }}
-                      onClick={(e) => e.stopPropagation()}>
-                      <button onClick={(e) => startRenamePass(passId, pass.name, e)}
-                        className="px-1 text-zinc-500 hover:text-zinc-200 text-[10px]" title="Rename">✎</button>
-                      <button onClick={(e) => { e.stopPropagation(); duplicatePass(passId); }}
-                        className="px-1 text-zinc-500 hover:text-zinc-200 text-[10px]" title="Duplicate">⧉</button>
-                      {otherTls.length > 0 && (
-                        <button onClick={(e) => openMove(passId, x, y + NODE_H + 2, e)}
-                          className="px-1 text-zinc-500 hover:text-zinc-200 text-[10px]" title="Move to timeline">↔</button>
-                      )}
-                      <button onClick={(e) => handleDeletePass(passId, pass.name, e)}
-                        className="px-1 text-zinc-500 hover:text-red-400 text-[10px]" title="Delete">✕</button>
-                    </div>
+                  <div className="absolute"
+                    style={{ left: x, top: y, width: NODE_W, height: NODE_H, opacity: isDimmed ? 0.2 : 1 }}>
                     {/* Node */}
                     <div
                       className={`
@@ -1193,27 +1213,46 @@ export function PipelineTimelineView() {
                           {isWriter && isReader ? 'RW' : isWriter ? 'W' : 'R'}
                         </span>
                       )}
-                      {!isEditing && pass.steps.length > 0 && (
-                        <span className="shrink-0 pr-1.5 text-[8px] text-zinc-600">{pass.steps.length}s</span>
-                      )}
                       {!isEditing && !pass.enabled && (
                         <span className="shrink-0 pr-1.5 text-[8px] italic text-zinc-500">off</span>
                       )}
                     </div>
                   </div>
 
-                  {/* Condition tags */}
+                  {/* Condition tags — above node, right-aligned */}
                   {pass.conditions.length > 0 && (
-                    <div className="absolute flex items-center gap-0.5 overflow-hidden"
-                      style={{ left: x, top: y + NODE_H + 3, width: NODE_W, height: 14 }}>
-                      {pass.conditions.slice(0, 3).map((c) => (
+                    <div className="absolute flex items-center justify-end gap-0.5 overflow-hidden"
+                      style={{ left: x, top: y - BAR_H, width: NODE_W, height: BAR_H, pointerEvents: 'none' }}>
+                      {pass.conditions.slice(0, 2).map((c) => (
                         <span key={c}
-                          className="text-[8px] bg-amber-950/70 text-amber-400 border border-amber-800/60 rounded-sm px-1 font-mono leading-3 truncate shrink-0 max-w-full">
+                          className="text-[8px] bg-amber-950/80 text-amber-400 border border-amber-800/60 rounded-sm px-1 font-mono leading-3 truncate shrink-0 max-w-[56px]">
                           {c}
                         </span>
                       ))}
-                      {pass.conditions.length > 3 && (
-                        <span className="text-[8px] text-amber-600/70 font-mono shrink-0">+{pass.conditions.length - 3}</span>
+                      {pass.conditions.length > 2 && (
+                        <span className="text-[8px] text-amber-600/70 font-mono shrink-0">+{pass.conditions.length - 2}</span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Step chips — below node */}
+                  {pass.steps.length > 0 && (
+                    <div className="absolute flex items-center gap-0.5 overflow-hidden"
+                      style={{ left: x, top: y + NODE_H + 4, width: NODE_W, height: STEPS_STRIP_H }}>
+                      {pass.steps.slice(0, 6).map((sid) => {
+                        const step = pipeline.steps[sid];
+                        if (!step) return null;
+                        const cls = STEP_CHIP_CLS[step.type] ?? 'bg-zinc-700/60 text-zinc-400 border-zinc-600/40';
+                        return (
+                          <span key={sid}
+                            className={`text-[7px] font-mono font-bold border rounded-sm px-1 leading-[14px] shrink-0 ${cls}`}
+                            title={step.name || step.type}>
+                            {STEP_ABBR[step.type] ?? '?'}
+                          </span>
+                        );
+                      })}
+                      {pass.steps.length > 6 && (
+                        <span className="text-[8px] text-zinc-600 font-mono shrink-0">+{pass.steps.length - 6}</span>
                       )}
                     </div>
                   )}

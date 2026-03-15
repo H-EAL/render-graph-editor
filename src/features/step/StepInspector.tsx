@@ -104,9 +104,20 @@ export function StepInspector() {
       </InspectorSection>
 
       <InspectorSection title="Conditions">
-        <div className="p-3">
+        <div className="p-3 flex flex-col gap-2">
+          {(parentPass?.conditions ?? []).length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {parentPass!.conditions.map((c) => (
+                <span key={c}
+                  className="inline-flex items-center gap-1 bg-zinc-800/60 text-zinc-600 text-xs rounded px-1.5 py-0.5 border border-zinc-700/40"
+                  title="Inherited from pass — applies to all steps">
+                  {c}
+                </span>
+              ))}
+            </div>
+          )}
           <TagsInput
-            values={step.conditions}
+            values={step.conditions.filter((c) => !(parentPass?.conditions ?? []).includes(c))}
             onChange={(v) => u({ conditions: v })}
             placeholder="Add condition flag"
           />

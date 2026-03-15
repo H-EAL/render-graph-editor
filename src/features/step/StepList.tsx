@@ -45,7 +45,9 @@ interface StepRowProps {
 function StepRow({ passId, stepId }: StepRowProps) {
   const { pipeline, selectedStepId, selectStep, deleteStep, duplicateStep } = useStore();
   const step = pipeline.steps[stepId];
+  const pass = pipeline.passes[passId];
   const isSelected = selectedStepId === stepId;
+  const stepOnlyConditions = step?.conditions.filter((c) => !(pass?.conditions ?? []).includes(c)) ?? [];
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stepId });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
@@ -73,15 +75,15 @@ function StepRow({ passId, stepId }: StepRowProps) {
 
       <span className="flex-1 text-sm text-zinc-200 truncate">{step.name}</span>
 
-      {step.conditions.length > 0 && (
+      {stepOnlyConditions.length > 0 && (
         <div className="flex items-center gap-0.5 shrink-0">
-          {step.conditions.slice(0, 2).map((c) => (
+          {stepOnlyConditions.slice(0, 2).map((c) => (
             <span key={c} className="text-[9px] bg-amber-950/60 text-amber-400 border border-amber-800/50 rounded px-1 font-mono leading-4">
               {c}
             </span>
           ))}
-          {step.conditions.length > 2 && (
-            <span className="text-[9px] text-amber-600/70 font-mono">+{step.conditions.length - 2}</span>
+          {stepOnlyConditions.length > 2 && (
+            <span className="text-[9px] text-amber-600/70 font-mono">+{stepOnlyConditions.length - 2}</span>
           )}
         </div>
       )}
