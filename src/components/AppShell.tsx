@@ -7,6 +7,7 @@ import { PassInspector } from "../features/pass/PassInspector";
 import { StepInspector } from "../features/step/StepInspector";
 import { ResourceDrawer } from "../features/resources/ResourceDrawer";
 import { JsonPreviewPanel } from "./JsonPreviewPanel";
+import { GlobalSearch } from "./GlobalSearch";
 import { validateDocument } from "../validation";
 import { StatsModal } from "../features/stats/StatsModal";
 import { computeMemStats, formatBytes } from "../utils/memoryStats";
@@ -124,11 +125,13 @@ function PipelineHeader({
     jsonOpen,
     activeExample,
     onSelectExample,
+    onOpenSearch,
 }: {
     onToggleJson: () => void;
     jsonOpen: boolean;
     activeExample: ExampleId;
     onSelectExample: (id: ExampleId) => void;
+    onOpenSearch: () => void;
 }) {
     const { pipeline, setPipelineName } = useStore();
     const [editing, setEditing] = useState(false);
@@ -188,6 +191,15 @@ function PipelineHeader({
                     </button>
                 ))}
             </div>
+
+            <button
+                onClick={onOpenSearch}
+                title="Global search (Ctrl+K)"
+                className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded border bg-zinc-800/60 border-zinc-700/60 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600 transition-colors"
+            >
+                <span>⌕</span>
+                <kbd className="font-mono text-[10px] text-zinc-600">Ctrl K</kbd>
+            </button>
 
             <ApiKeyButton />
 
@@ -419,8 +431,21 @@ export function AppShell() {
     const [showJson, setShowJson] = useState(false);
     const [showValidation, setShowValidation] = useState(false);
     const [showStats, setShowStats] = useState(false);
+    const [showSearch, setShowSearch] = useState(false);
     const [rightCollapsed, setRightCollapsed] = useState(false);
     const [activeExample, setActiveExample] = useState<ExampleId>("rg");
+
+    // Global Ctrl+K / Cmd+K shortcut
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+                e.preventDefault();
+                setShowSearch((v) => !v);
+            }
+        };
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+    }, []);
 
     const loadDocument = useStore((s) => s.loadDocument);
     const handleSelectExample = useCallback(
@@ -444,6 +469,7 @@ export function AppShell() {
                 jsonOpen={showJson}
                 activeExample={activeExample}
                 onSelectExample={handleSelectExample}
+                onOpenSearch={() => setShowSearch(true)}
             />
 
             {/* Main area: timeline (left) + right panel */}
@@ -494,6 +520,9 @@ export function AppShell() {
 
             {/* JSON drawer (overlay) */}
             <JsonDrawer open={showJson} onClose={() => setShowJson(false)} />
+
+            {/* Global search palette */}
+            <GlobalSearch open={showSearch} onClose={() => setShowSearch(false)} />
         </div>
     );
 }

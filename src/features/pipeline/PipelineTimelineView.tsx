@@ -366,9 +366,15 @@ export function PipelineTimelineView() {
     // Multi-select for resource rows (local — drives pass highlighting)
     const [selectedResourceIds, setSelectedResourceIds] = useState<Set<ResourceId>>(new Set());
 
-    // When the drawer is closed from outside (e.g. ResourceDrawer ✕ button), clear local multi-select
+    // Sync local multi-select with external selectedResourceId changes
     useEffect(() => {
-        if (!selectedResourceId) setSelectedResourceIds(new Set());
+        if (!selectedResourceId) {
+            setSelectedResourceIds(new Set());
+        } else {
+            setSelectedResourceIds((prev) =>
+                prev.has(selectedResourceId) ? prev : new Set([selectedResourceId]),
+            );
+        }
     }, [selectedResourceId]);
 
     const [sortMode, setSortMode] = useState<SortMode>("manual");
@@ -531,6 +537,17 @@ export function PipelineTimelineView() {
     }, [resourceOrder, validResIds, selectedResourceId]);
 
     const layout = useLayout(pipeline, allEdges, overlayRows.length);
+
+    // Scroll canvas to show selected pass (e.g. after global search selection)
+    useEffect(() => {
+        if (!selectedPassId || !scrollRef.current) return;
+        const pl = layout.passLayouts.get(selectedPassId);
+        if (!pl) return;
+        const el = scrollRef.current;
+        const targetLeft = pl.x - el.clientWidth / 2 + NODE_W / 2;
+        const targetTop = pl.y - el.clientHeight / 2 + NODE_H / 2;
+        el.scrollTo({ left: Math.max(0, targetLeft), top: Math.max(0, targetTop), behavior: "smooth" });
+    }, [selectedPassId, layout]);
 
     // Access map keyed by rid (unordered)
     const allAccessMaps = useMemo(
@@ -697,6 +714,17 @@ export function PipelineTimelineView() {
         () => filteredRows.map((rid) => ({ rid, map: allAccessMaps.get(rid) ?? new Map() })),
         [filteredRows, allAccessMaps],
     );
+
+    // Scroll resource row into view when selectedResourceId changes
+    useEffect(() => {
+        if (!selectedResourceId || !labelsRef.current) return;
+        const idx = filteredRows.indexOf(selectedResourceId);
+        if (idx === -1) return;
+        const el = labelsRef.current;
+        const rowY = layout.overlayY + idx * OVERLAY_H;
+        const targetTop = rowY - el.clientHeight / 2 + OVERLAY_H / 2;
+        el.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+    }, [selectedResourceId, filteredRows, layout.overlayY]);
 
     const resolveIds = (ids: string[]) =>
         ids.map((id) => rtNames.get(id) ?? bufNames.get(id) ?? id).join(", ");

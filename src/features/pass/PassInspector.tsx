@@ -63,7 +63,7 @@ function DependencyRow({
 // ─── Main inspector ───────────────────────────────────────────────────────────
 
 export function PassInspector() {
-    const { pipeline, resources, selectedPassId, updatePass } = useStore();
+    const { pipeline, resources, selectedPassId, updatePass, selectResource } = useStore();
     const pass = selectedPassId ? pipeline.passes[selectedPassId] : null;
 
     const allEdges = useMemo(() => deriveDependencies(pipeline), [pipeline]);
@@ -168,7 +168,8 @@ export function PassInspector() {
                                             <span
                                                 key={rid}
                                                 title={resourceOrigins.get(rid)?.join("\n")}
-                                                className="text-[10px] font-mono bg-blue-900/30 text-blue-300 border border-blue-700/40 rounded px-1.5 py-0.5 cursor-default"
+                                                onClick={() => selectResource(rid)}
+                                                className="text-[10px] font-mono bg-blue-900/30 text-blue-300 border border-blue-700/40 rounded px-1.5 py-0.5 cursor-pointer hover:bg-blue-800/50 hover:border-blue-600/60 transition-colors"
                                             >
                                                 {name}
                                             </span>
@@ -193,7 +194,8 @@ export function PassInspector() {
                                             <span
                                                 key={rid}
                                                 title={resourceOrigins.get(rid)?.join("\n")}
-                                                className="text-[10px] font-mono bg-amber-900/30 text-amber-300 border border-amber-700/40 rounded px-1.5 py-0.5 cursor-default"
+                                                onClick={() => selectResource(rid)}
+                                                className="text-[10px] font-mono bg-amber-900/30 text-amber-300 border border-amber-700/40 rounded px-1.5 py-0.5 cursor-pointer hover:bg-amber-800/50 hover:border-amber-600/60 transition-colors"
                                             >
                                                 {name}
                                             </span>

@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useLayoutEffect } from "react";
 import {
     DndContext,
     closestCenter,
@@ -73,6 +73,13 @@ function PassRow({ pass, timelineId }: { pass: Pass; timelineId: string }) {
         opacity: isDragging ? 0.4 : 1,
     };
 
+    // Scroll into view when selected (e.g. via global search)
+    useLayoutEffect(() => {
+        if (!isSelected) return;
+        const el = document.querySelector<HTMLElement>(`[data-pass-id="${pass.id}"]`);
+        el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }, [isSelected, pass.id]);
+
     const otherTimelines = pipeline.timelines.filter((tl) => tl.id !== timelineId);
 
     const startEdit = (e: React.MouseEvent) => {
@@ -96,6 +103,7 @@ function PassRow({ pass, timelineId }: { pass: Pass; timelineId: string }) {
     return (
         <div
             ref={setNodeRef}
+            data-pass-id={pass.id}
             style={style}
             onClick={() => selectPass(pass.id)}
             className={`group relative flex flex-col gap-0.5 px-2 py-2 cursor-pointer border-b border-zinc-800/50 hover:bg-zinc-800/40 select-none
