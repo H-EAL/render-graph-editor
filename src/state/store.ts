@@ -69,6 +69,8 @@ export function makeDefaultStep(type: StepType): Step {
             };
         case "dispatchCompute":
             return { ...base, type, shader: "", groupsX: 1, groupsY: 1, groupsZ: 1 };
+        case "dispatchComputeDecals":
+            return { ...base, type, shader: "", groupsX: 1, groupsY: 1, groupsZ: 1 };
         case "dispatchRayTracing":
             return {
                 ...base,
@@ -136,6 +138,8 @@ export interface AppState {
     selectedResourceId: ResourceId | null;
     /** Display order of RT + Buffer resources in the timeline overlay rows */
     resourceOrder: ResourceId[];
+    /** Resources hidden from the timeline overlay (still exist in the library) */
+    hiddenResourceIds: ResourceId[];
 
     // ── Timeline actions ──────────────────────────────────────────────────────
     addTimeline: (type?: TimelineType) => void;
@@ -200,6 +204,10 @@ export interface AppState {
     updateInputParameter: (id: ResourceId, patch: Partial<InputParameter>) => void;
     deleteInputParameter: (id: ResourceId) => void;
 
+    toggleResourceVisibility: (id: ResourceId) => void;
+    hideOthers: (id: ResourceId) => void;
+    showAllResources: () => void;
+
     // ── IO ────────────────────────────────────────────────────────────────────
     loadDocument: (json: string) => void;
     getDocumentJson: () => string;
@@ -231,6 +239,7 @@ export const useStore = create<AppState>()(
                 selectedCommandId: null,
                 selectedResourceId: null,
                 resourceOrder: resourceOrderFromLibrary(rgDocument.resources),
+                hiddenResourceIds: [],
 
                 // ── Timelines ─────────────────────────────────────────────────────────
                 addTimeline: (type = "graphics") =>
@@ -610,6 +619,17 @@ export const useStore = create<AppState>()(
                 selectCommand: (id) => set({ selectedCommandId: id }),
                 selectResource: (id) => set({ selectedResourceId: id }),
                 setResourceOrder: (ids) => set({ resourceOrder: ids }),
+                toggleResourceVisibility: (id) =>
+                    set((s) => ({
+                        hiddenResourceIds: s.hiddenResourceIds.includes(id)
+                            ? s.hiddenResourceIds.filter((rid) => rid !== id)
+                            : [...s.hiddenResourceIds, id],
+                    })),
+                hideOthers: (id) =>
+                    set((s) => ({
+                        hiddenResourceIds: s.resourceOrder.filter((rid) => rid !== id),
+                    })),
+                showAllResources: () => set({ hiddenResourceIds: [] }),
 
                 addManualDep: (passId, depPassId) =>
                     set((s) => {

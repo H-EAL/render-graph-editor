@@ -209,6 +209,7 @@ export type RasterCommandType = RasterCommand["type"];
 export type StepType =
     | "raster"
     | "dispatchCompute"
+    | "dispatchComputeDecals"
     | "dispatchRayTracing"
     | "copyImage"
     | "blitImage"
@@ -243,6 +244,23 @@ export interface DispatchComputeStep extends StepBase {
     groupsX: number | string;
     groupsY: number | string;
     groupsZ: number | string;
+}
+
+export interface DispatchComputeDecalsStep extends StepBase {
+    type: "dispatchComputeDecals";
+    shader: ResourceId;
+    /** Named shader input slot → resource ID bindings (from shader descriptor) */
+    shaderBindings?: Record<string, ResourceId>;
+    /** Per-slot access decoded from the encoded binding value ('read' | 'write' | 'read_write') */
+    shaderBindingAccess?: Record<string, string>;
+    /** Slot that provides the dispatch size reference (its dimensions drive group counts) */
+    sizeReferenceSlot?: string;
+    groupsX: number | string;
+    groupsY: number | string;
+    groupsZ: number | string;
+    /** Decal material set to iterate over */
+    materialSet?: string;
+    batchTag?: string;
 }
 
 export interface DispatchRayTracingStep extends StepBase {
@@ -304,6 +322,7 @@ export interface GenerateMipChainStep extends StepBase {
 export type Step =
     | RasterStep
     | DispatchComputeStep
+    | DispatchComputeDecalsStep
     | DispatchRayTracingStep
     | CopyImageStep
     | BlitImageStep

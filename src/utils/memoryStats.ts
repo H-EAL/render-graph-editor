@@ -30,9 +30,14 @@ const FORMAT_BPP: Record<TextureFormat, number> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function resolveSize(expr: number | string, vp: ViewportSize): number {
-  if (typeof expr === 'number') return expr;
-  const s = String(expr).trim();
+function resolveSize(expr: number | string, vp: ViewportSize, axis: 'w' | 'h'): number {
+  if (typeof expr === 'number') {
+    // Legacy schema: 0 = full viewport, 0 < v < 1 = fraction of viewport
+    if (expr === 0) return vp[axis];
+    if (expr > 0 && expr < 1) return Math.round(vp[axis] * expr);
+    return expr;
+  }
+  const s = expr.trim();
   if (s === 'viewport.width')  return vp.w;
   if (s === 'viewport.height') return vp.h;
   const n = Number(s);
@@ -94,8 +99,8 @@ export function computeMemStats(
 ): PipelineMemStats {
 
   const renderTargets: RTMemStat[] = resources.renderTargets.map((rt) => {
-    const w   = resolveSize(rt.width,  vp);
-    const h   = resolveSize(rt.height, vp);
+    const w   = resolveSize(rt.width,  vp, 'w');
+    const h   = resolveSize(rt.height, vp, 'h');
     const bpp = FORMAT_BPP[rt.format] ?? 4;
     const bytes = Math.ceil(w * h * bpp * mipChainFactor(rt.mips) * (rt.layers ?? 1));
     const isViewportScaled = typeof rt.width === 'string' || typeof rt.height === 'string';

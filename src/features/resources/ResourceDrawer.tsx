@@ -7,6 +7,7 @@ import type { TextureFormat, ShaderStage, InputParamType, BlendFactor, BlendOp }
 
 // ─── Option lists ─────────────────────────────────────────────────────────────
 
+
 const FORMAT_OPTS: { value: TextureFormat; label: string }[] = [
     { value: "rgba8", label: "RGBA8" },
     { value: "rgba16f", label: "RGBA16F" },
@@ -62,6 +63,20 @@ const BLEND_OP_OPTS: { value: BlendOp; label: string }[] = [
     { value: "min", label: "Min" },
     { value: "max", label: "Max" },
 ];
+
+// ─── RT size helpers ──────────────────────────────────────────────────────────
+
+/**
+ * In the legacy schema, numeric 0 means "viewport size" and a non-zero fraction
+ * like 0.5 means "50% of viewport". String values (e.g. "viewport.width") are
+ * kept as-is.
+ */
+export function fmtRTSize(v: number | string): string {
+    if (typeof v === "string") return v;
+    if (v === 0) return "viewport";
+    if (v > 0 && v < 1) return `${v}× viewport`;
+    return String(v);
+}
 
 // ─── Section divider ──────────────────────────────────────────────────────────
 
@@ -219,14 +234,14 @@ export function ResourceDrawer() {
                         <div className="grid grid-cols-3 gap-2">
                             <Input
                                 label="Width"
-                                value={String(rt.width)}
+                                value={fmtRTSize(rt.width)}
                                 onChange={(e) =>
                                     updateRenderTarget(rt.id, { width: e.target.value })
                                 }
                             />
                             <Input
                                 label="Height"
-                                value={String(rt.height)}
+                                value={fmtRTSize(rt.height)}
                                 onChange={(e) =>
                                     updateRenderTarget(rt.id, { height: e.target.value })
                                 }

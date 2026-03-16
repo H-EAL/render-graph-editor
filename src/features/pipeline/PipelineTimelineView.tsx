@@ -25,6 +25,7 @@ import {
 import { derivePassAccess } from "../../utils/resourceOverlay";
 import { inferPassResources } from "../../utils/inferStepResources";
 import { newId } from "../../utils/id";
+import { fmtRTSize } from "../resources/ResourceDrawer";
 import type { PassId, Pipeline, ResourceId, Step, TimelineId, TimelineType } from "../../types";
 
 // ─── Layout constants ──────────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ const STEPS_STRIP_H = 16; // step chips row below pass node
 const STEP_ABBR: Record<string, string> = {
     raster: "RST",
     dispatchCompute: "DC",
+    dispatchComputeDecals: "DCD",
     dispatchRayTracing: "DRT",
     copyImage: "CP",
     blitImage: "BL",
@@ -246,8 +248,10 @@ interface SortableResourceLabelProps {
     isSelected: boolean;
     isDimmed: boolean;
     isDraggable: boolean;
+    isHidden: boolean;
     onSelect: (e: React.MouseEvent) => void;
     onContextMenu: (e: React.MouseEvent) => void;
+    onToggleVisibility: (e: React.MouseEvent) => void;
 }
 
 function SortableResourceLabel({
@@ -261,8 +265,10 @@ function SortableResourceLabel({
     isSelected,
     isDimmed,
     isDraggable,
+    isHidden,
     onSelect,
     onContextMenu,
+    onToggleVisibility,
 }: SortableResourceLabelProps) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
         id: rid,
@@ -287,11 +293,11 @@ function SortableResourceLabel({
                 transform: CSS.Transform.toString(transform),
                 transition,
                 height: OVERLAY_H,
-                opacity: isDragging ? 0.4 : isDimmed ? 0.25 : 1,
+                opacity: isDragging ? 0.4 : isHidden ? 0.35 : isDimmed ? 0.25 : 1,
                 background: bg,
                 zIndex: isDragging ? 50 : undefined,
             }}
-            className={`flex items-center gap-1 px-1 border-t border-dashed border-purple-800/40 cursor-pointer select-none
+            className={`group/row flex items-center gap-1 px-1 border-t border-dashed border-purple-800/40 cursor-pointer select-none
         ${isSelected ? "ring-1 ring-inset ring-sky-500/40" : "hover:bg-white/2"}`}
             title={tooltip}
             onClick={onSelect}
@@ -331,7 +337,29 @@ function SortableResourceLabel({
                     ⚠
                 </span>
             )}
+            <button
+                onClick={onToggleVisibility}
+                className={`shrink-0 text-[9px] leading-none transition-colors ${isHidden ? "text-zinc-500 hover:text-zinc-200" : "opacity-0 group-hover/row:opacity-100 text-zinc-600 hover:text-zinc-300"}`}
+                title={isHidden ? "Show in timeline" : "Hide from timeline"}
+            >
+                {isHidden ? "◌" : "●"}
+            </button>
         </div>
+    );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Returns true if the description indicates a GPU→CPU readback memory type. */
+function isGpuToCpu(desc?: string): boolean {
+    if (!desc) return false;
+    const d = desc.toLowerCase();
+    return (
+        d.includes("gpu_to_cpu") ||
+        d.includes("gputocpu") ||
+        d.includes("gpu-to-cpu") ||
+        d.includes("gpu to cpu") ||
+        d.includes("readback")
     );
 }
 
@@ -361,6 +389,13 @@ export function PipelineTimelineView() {
         addRenderTarget,
         addBuffer,
         addInputParameter,
+        deleteRenderTarget,
+        deleteBuffer,
+        deleteInputParameter,
+        hiddenResourceIds,
+        toggleResourceVisibility,
+        hideOthers,
+        showAllResources,
     } = useStore();
 
     // Multi-select for resource rows (local — drives pass highlighting)
@@ -413,7 +448,10 @@ export function PipelineTimelineView() {
     const [filterUnused, setFilterUnused] = useState(false);
     const [filterNonOverlap, setFilterNonOverlap] = useState(false);
     const [filterRBW, setFilterRBW] = useState(false);
+    const [showHidden, setShowHidden] = useState(false);
     const [filterPos, setFilterPos] = useState<{ x: number; y: number } | null>(null);
+
+    const hiddenSet = useMemo(() => new Set(hiddenResourceIds), [hiddenResourceIds]);
 
     const addMenuRef = useRef<HTMLDivElement>(null);
     const addResRef = useRef<HTMLDivElement>(null);
@@ -487,6 +525,48 @@ export function PipelineTimelineView() {
         return () => window.removeEventListener("keydown", h);
     }, [selectPass, selectStep, selectResource]);
 
+    // Arrow key navigation: left/right between passes, up/down between resources
+    const filteredRowsRef = useRef<ResourceId[]>([]);
+    const selectedPassIdRef = useRef<PassId | null>(null);
+    const selectedResourceIdRef = useRef<ResourceId | null>(null);
+    useEffect(() => { filteredRowsRef.current = filteredRows; });
+    useEffect(() => { selectedPassIdRef.current = selectedPassId; });
+    useEffect(() => { selectedResourceIdRef.current = selectedResourceId; });
+
+    useEffect(() => {
+        const orderedPassIds = pipeline.timelines.flatMap((tl) => tl.passIds);
+        const h = (e: globalThis.KeyboardEvent) => {
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+            const pid = selectedPassIdRef.current;
+            const rid = selectedResourceIdRef.current;
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                if (!pid) return;
+                e.preventDefault();
+                const idx = orderedPassIds.indexOf(pid);
+                if (idx === -1) return;
+                const next = e.key === "ArrowLeft" ? orderedPassIds[idx - 1] : orderedPassIds[idx + 1];
+                if (next) selectPass(next);
+            } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                const rows = filteredRowsRef.current;
+                if (rows.length === 0) return;
+                e.preventDefault();
+                if (!rid) {
+                    selectResource(e.key === "ArrowDown" ? rows[0] : rows[rows.length - 1]);
+                    return;
+                }
+                const idx = rows.indexOf(rid);
+                if (idx === -1) return;
+                const next = e.key === "ArrowUp" ? rows[idx - 1] : rows[idx + 1];
+                if (next) {
+                    selectResource(next);
+                    setSelectedResourceIds(new Set([next]));
+                }
+            }
+        };
+        window.addEventListener("keydown", h);
+        return () => window.removeEventListener("keydown", h);
+    }, [pipeline.timelines, selectPass, selectResource]);
+
     // Close dropdowns / context menu on outside click
     useEffect(() => {
         const h = (e: MouseEvent) => {
@@ -553,11 +633,13 @@ export function PipelineTimelineView() {
     );
 
     const overlayRows = useMemo(() => {
-        const rows = resourceOrder.filter((id) => validResIds.has(id));
+        const rows = resourceOrder.filter(
+            (id) => validResIds.has(id) && (showHidden || !hiddenSet.has(id)),
+        );
         if (selectedResourceId && !validResIds.has(selectedResourceId))
             rows.push(selectedResourceId);
         return rows;
-    }, [resourceOrder, validResIds, selectedResourceId]);
+    }, [resourceOrder, validResIds, selectedResourceId, showHidden, hiddenSet]);
 
     const layout = useLayout(pipeline, allEdges, overlayRows.length);
 
@@ -568,7 +650,7 @@ export function PipelineTimelineView() {
         if (!pl) return;
         const el = topScrollRef.current;
         const targetLeft = pl.x - el.clientWidth / 2 + NODE_W / 2;
-        el.scrollTo({ left: Math.max(0, targetLeft), behavior: "smooth" });
+        el.scrollTo({ left: Math.max(0, targetLeft), behavior: "instant" });
     }, [selectedPassId, layout]);
 
     // Access map keyed by rid (unordered)
@@ -615,10 +697,15 @@ export function PipelineTimelineView() {
     const deadWriteIds = useMemo(() => {
         const dead = new Set<string>();
         for (const [rid, usage] of usageMap) {
-            if (usage.writers.length > 0 && usage.readers.length === 0) dead.add(rid);
+            if (usage.writers.length > 0 && usage.readers.length === 0) {
+                // Depth RTs are consumed by the GPU during rasterization — not a dead write
+                const rt = rtMap.get(rid);
+                if (rt?.format.startsWith("d")) continue;
+                dead.add(rid);
+            }
         }
         return dead;
-    }, [usageMap]);
+    }, [usageMap, rtMap]);
     const unusedIds = useMemo(() => {
         const unused = new Set<string>();
         const allIds = [
@@ -628,10 +715,15 @@ export function PipelineTimelineView() {
         ];
         for (const rid of allIds) {
             const u = usageMap.get(rid);
-            if (!u || (u.writers.length === 0 && u.readers.length === 0)) unused.add(rid);
+            if (!u || (u.writers.length === 0 && u.readers.length === 0)) {
+                // RTs readable by the CPU (described as gpu_to_cpu / readback) are not unused
+                const rt = rtMap.get(rid);
+                if (rt && isGpuToCpu(rt.description)) continue;
+                unused.add(rid);
+            }
         }
         return unused;
-    }, [resources.renderTargets, resources.buffers, resources.inputParameters, usageMap]);
+    }, [resources.renderTargets, resources.buffers, resources.inputParameters, usageMap, rtMap]);
 
     // Resources that are read by at least one pass before any same-timeline write.
     // Cross-timeline writers are considered valid prior writes (semaphore-ordered).
@@ -689,7 +781,8 @@ export function PipelineTimelineView() {
         filterDead ||
         filterUnused ||
         filterNonOverlap ||
-        filterRBW;
+        filterRBW ||
+        showHidden;
 
     const filteredRows = useMemo(() => {
         if (!hasActiveFilter) return displayRows;
@@ -745,7 +838,7 @@ export function PipelineTimelineView() {
         const el = bottomLabelsRef.current;
         const rowY = idx * OVERLAY_H;
         const targetTop = rowY - el.clientHeight / 2 + OVERLAY_H / 2;
-        el.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+        el.scrollTo({ top: Math.max(0, targetTop), behavior: "instant" });
     }, [selectedResourceId, filteredRows]);
 
     const resolveIds = (ids: string[]) =>
@@ -774,6 +867,18 @@ export function PipelineTimelineView() {
         e.stopPropagation();
         setContextMenu({ rid, x: e.clientX, y: e.clientY });
     };
+    const deleteResource = (rid: ResourceId) => {
+        const rt = resources.renderTargets.find((r) => r.id === rid);
+        const buf = resources.buffers.find((b) => b.id === rid);
+        const param = resources.inputParameters.find((p) => p.id === rid);
+        const name = rt?.name ?? buf?.name ?? param?.name ?? rid;
+        if (!window.confirm(`Delete "${name}"?`)) return;
+        setContextMenu(null);
+        if (selectedResourceId === rid) selectResource(null);
+        if (rt) deleteRenderTarget(rid);
+        else if (buf) deleteBuffer(rid);
+        else if (param) deleteInputParameter(rid);
+    };
     const bringToTop = (rid: ResourceId) => {
         setResourceOrder([rid, ...resourceOrder.filter((id) => id !== rid)]);
         setSortMode("manual");
@@ -784,6 +889,35 @@ export function PipelineTimelineView() {
         setSortMode("manual");
         setContextMenu(null);
     };
+
+    const scrollToFirstUse = useCallback(
+        (rid: ResourceId) => {
+            const accessMap = allAccessMaps.get(rid);
+            if (!accessMap || !topScrollRef.current) return;
+            const xs = [...layout.passLayouts.values()]
+                .filter(({ passId }) => accessMap.has(passId))
+                .map(({ x }) => x);
+            if (xs.length === 0) return;
+            const minX = Math.min(...xs);
+            const el = topScrollRef.current;
+            el.scrollTo({ left: Math.max(0, minX - el.clientWidth / 2 + NODE_W / 2), behavior: "instant" });
+        },
+        [allAccessMaps, layout],
+    );
+
+    // F key — scroll to first use of the selected resource
+    useEffect(() => {
+        const h = (e: globalThis.KeyboardEvent) => {
+            if (e.key !== "f" && e.key !== "F") return;
+            if (e.repeat) return;
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+            if (selectedResourceIds.size === 0) return;
+            const rid = [...selectedResourceIds][selectedResourceIds.size - 1];
+            scrollToFirstUse(rid);
+        };
+        window.addEventListener("keydown", h);
+        return () => window.removeEventListener("keydown", h);
+    }, [selectedResourceIds, scrollToFirstUse]);
 
     // ── Resource creation ──────────────────────────────────────────────────────
     const createRenderTarget = () => {
@@ -1214,7 +1348,7 @@ export function PipelineTimelineView() {
                     {/* Pass canvas scroll container */}
                     <div
                         ref={topScrollRef}
-                        style={{ overflowX: "auto", overflowY: "hidden", flex: 1, scrollbarWidth: "none" }}
+                        style={{ overflowX: "auto", overflowY: "hidden", flex: 1, scrollbarWidth: "none", overscrollBehaviorX: "none" }}
                         onContextMenu={(e) => {
                             e.preventDefault();
                             if (pipeline.timelines.length === 0) return;
@@ -1790,7 +1924,7 @@ export function PipelineTimelineView() {
                                         const paramObj = paramMap.get(rid);
                                         const name = resolveIds([rid]);
                                         const tooltip = rtObj
-                                            ? `${rtObj.name}\nType: Render Target\nFormat: ${rtObj.format}\nSize: ${rtObj.width} × ${rtObj.height}\nMips: ${rtObj.mips}`
+                                            ? `${rtObj.name}\nType: Render Target\nFormat: ${rtObj.format}\nSize: ${fmtRTSize(rtObj.width)} × ${fmtRTSize(rtObj.height)}\nMips: ${rtObj.mips}`
                                             : bufObj
                                               ? `${bufObj.name}\nType: Buffer\nSize: ${bufObj.size}`
                                               : paramObj
@@ -1845,6 +1979,11 @@ export function PipelineTimelineView() {
                                                         selectResource(isSole ? null : rid);
                                                     }
                                                 }}
+                                                isHidden={hiddenSet.has(rid)}
+                                                onToggleVisibility={(e) => {
+                                                    e.stopPropagation();
+                                                    toggleResourceVisibility(rid);
+                                                }}
                                                 onContextMenu={(e) => openContextMenu(rid, e)}
                                             />
                                         );
@@ -1868,7 +2007,7 @@ export function PipelineTimelineView() {
                         <div
                             ref={bottomScrollRef}
                             className="flex-1"
-                            style={{ overflow: "auto" }}
+                            style={{ overflow: "auto", overscrollBehaviorX: "none" }}
                         >
                             <div
                                 className="relative"
@@ -2187,6 +2326,12 @@ export function PipelineTimelineView() {
                                 label: "↑ Read-before-write",
                                 desc: "Read without a prior write on the same timeline",
                             },
+                            {
+                                state: showHidden,
+                                set: setShowHidden,
+                                label: "◌ Show hidden",
+                                desc: "Reveal resources that have been hidden from the overlay",
+                            },
                         ].map(({ state, set, label, desc }) => (
                             <label
                                 key={label}
@@ -2219,6 +2364,7 @@ export function PipelineTimelineView() {
                                     setFilterUnused(false);
                                     setFilterNonOverlap(false);
                                     setFilterRBW(false);
+                                    setShowHidden(false);
                                 }}
                                 className="text-[10px] text-zinc-600 hover:text-sky-400 transition-colors"
                             >
@@ -2290,6 +2436,14 @@ export function PipelineTimelineView() {
                 >
                     <button
                         className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
+                        onClick={() => { scrollToFirstUse(contextMenu.rid); setContextMenu(null); }}
+                    >
+                        <span className="text-zinc-500">⇤</span> Scroll to first use
+                        <span className="ml-auto text-[10px] font-mono text-zinc-600">F</span>
+                    </button>
+                    <div className="my-0.5 border-t border-zinc-700/60" />
+                    <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
                         onClick={() => bringToTop(contextMenu.rid)}
                     >
                         <span className="text-zinc-500">↑</span> Bring to top
@@ -2299,6 +2453,37 @@ export function PipelineTimelineView() {
                         onClick={() => bringToBottom(contextMenu.rid)}
                     >
                         <span className="text-zinc-500">↓</span> Bring to bottom
+                    </button>
+                    <div className="my-0.5 border-t border-zinc-700/60" />
+                    <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
+                        onClick={() => { toggleResourceVisibility(contextMenu.rid); setContextMenu(null); }}
+                    >
+                        {hiddenSet.has(contextMenu.rid)
+                            ? <><span className="text-zinc-500">◌</span> Show in timeline</>
+                            : <><span className="text-zinc-500">●</span> Hide from timeline</>
+                        }
+                    </button>
+                    <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
+                        onClick={() => { hideOthers(contextMenu.rid); setContextMenu(null); }}
+                    >
+                        <span className="text-zinc-500">◎</span> Hide others
+                    </button>
+                    {hiddenResourceIds.length > 0 && (
+                        <button
+                            className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
+                            onClick={() => { showAllResources(); setContextMenu(null); }}
+                        >
+                            <span className="text-zinc-500">○</span> Show all
+                        </button>
+                    )}
+                    <div className="my-0.5 border-t border-zinc-700/60" />
+                    <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-zinc-700 flex items-center gap-2"
+                        onClick={() => deleteResource(contextMenu.rid)}
+                    >
+                        <span className="text-red-600">✕</span> Delete
                     </button>
                 </div>
             )}

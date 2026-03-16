@@ -6,6 +6,7 @@ import { TagsInput } from "../../components/ui/TagsInput";
 import { ResourceSelect } from "../../components/ui/ResourceSelect";
 import { RasterCommandEditor } from "./editors/RasterCommandEditor";
 import { DispatchComputeEditor } from "./editors/DispatchComputeEditor";
+import { DispatchComputeDecalsEditor } from "./editors/DispatchComputeDecalsEditor";
 import { DispatchRayTracingEditor } from "./editors/DispatchRayTracingEditor";
 import { ImageTransferEditor } from "./editors/ImageTransferEditor";
 import { ClearImagesEditor } from "./editors/ClearImagesEditor";
@@ -317,6 +318,8 @@ function StepTypeEditor({ step }: { step: Step }) {
             return <RasterStepEditor step={step} />;
         case "dispatchCompute":
             return <DispatchComputeEditor step={step} />;
+        case "dispatchComputeDecals":
+            return <DispatchComputeDecalsEditor step={step} />;
         case "dispatchRayTracing":
             return <DispatchRayTracingEditor step={step} />;
         case "copyImage":
