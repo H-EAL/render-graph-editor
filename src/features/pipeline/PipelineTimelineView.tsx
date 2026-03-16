@@ -43,6 +43,8 @@ const ADD_W = 80;
 const OVERLAY_H = 26;
 const RESOURCE_ZONE_H = 22; // always-visible resource section header
 const STEPS_STRIP_H = 16; // step chips row below pass node
+const ELLIPSIS_W = 48;     // width of a compressed-passes ellipsis node
+const FOCUS_GAP = 14;      // gap between items in focused view
 
 // ─── Step chip config ─────────────────────────────────────────────────────────
 
@@ -405,6 +407,7 @@ export function PipelineTimelineView() {
     useEffect(() => {
         if (!selectedResourceId) {
             setSelectedResourceIds(new Set());
+            setFocusedView(false);
         } else {
             setSelectedResourceIds((prev) =>
                 prev.has(selectedResourceId) ? prev : new Set([selectedResourceId]),
@@ -439,6 +442,9 @@ export function PipelineTimelineView() {
     const [nodeCtxMenu, setNodeCtxMenu] = useState<{ passId: PassId; x: number; y: number } | null>(
         null,
     );
+
+    // Focused view: compress passes that don't use selected resources
+    const [focusedView, setFocusedView] = useState(false);
 
     // Filter state
     type ResTypeFilter = "rt" | "buf" | "param";
@@ -529,12 +535,13 @@ export function PipelineTimelineView() {
     const filteredRowsRef = useRef<ResourceId[]>([]);
     const selectedPassIdRef = useRef<PassId | null>(null);
     const selectedResourceIdRef = useRef<ResourceId | null>(null);
+    const effectivePassLayoutsRef = useRef<Map<PassId, PassLayout>>(new Map());
     useEffect(() => { filteredRowsRef.current = filteredRows; });
     useEffect(() => { selectedPassIdRef.current = selectedPassId; });
     useEffect(() => { selectedResourceIdRef.current = selectedResourceId; });
+    useEffect(() => { effectivePassLayoutsRef.current = effectivePassLayouts; });
 
     useEffect(() => {
-        const orderedPassIds = pipeline.timelines.flatMap((tl) => tl.passIds);
         const h = (e: globalThis.KeyboardEvent) => {
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
             const pid = selectedPassIdRef.current;
@@ -542,6 +549,10 @@ export function PipelineTimelineView() {
             if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
                 if (!pid) return;
                 e.preventDefault();
+                // In focused view only visible passes are in effectivePassLayouts; in normal view all passes are
+                const orderedPassIds = pipeline.timelines
+                    .flatMap((tl) => tl.passIds)
+                    .filter((id) => effectivePassLayoutsRef.current.has(id));
                 const idx = orderedPassIds.indexOf(pid);
                 if (idx === -1) return;
                 const next = e.key === "ArrowLeft" ? orderedPassIds[idx - 1] : orderedPassIds[idx + 1];
@@ -658,6 +669,49 @@ export function PipelineTimelineView() {
         () => new Map(overlayRows.map((rid) => [rid, derivePassAccess(rid, pipeline)])),
         [overlayRows, pipeline],
     );
+
+    // Focused layout: per-timeline linear layout, compressing non-relevant passes into ellipsis nodes
+    type EllipsisNode = { count: number; x: number; y: number };
+    const focusedLayout = useMemo(() => {
+        if (!focusedView || selectedResourceIds.size === 0) return null;
+        const passLayouts = new Map<PassId, { passId: PassId; x: number; y: number; cx: number; cy: number; row: number }>();
+        const ellipsisNodes: EllipsisNode[] = [];
+        let maxX = 0;
+        for (const [tlIdx, tl] of pipeline.timelines.entries()) {
+            const y = PAD_T + tlIdx * ROW_H + (ROW_H - NODE_H) / 2;
+            let x = 0;
+            let i = 0;
+            while (i < tl.passIds.length) {
+                const pid = tl.passIds[i];
+                const usesSelected = [...selectedResourceIds].some(
+                    (rid) => allAccessMaps.get(rid)?.has(pid),
+                );
+                if (usesSelected) {
+                    passLayouts.set(pid, { passId: pid, x, y, cx: x + NODE_W / 2, cy: y + NODE_H / 2, row: tlIdx });
+                    maxX = Math.max(maxX, x + NODE_W);
+                    x += NODE_W + FOCUS_GAP;
+                    i++;
+                } else {
+                    let count = 0;
+                    while (i < tl.passIds.length) {
+                        const nextPid = tl.passIds[i];
+                        if ([...selectedResourceIds].some((rid) => allAccessMaps.get(rid)?.has(nextPid))) break;
+                        count++;
+                        i++;
+                    }
+                    ellipsisNodes.push({ count, x, y });
+                    maxX = Math.max(maxX, x + ELLIPSIS_W);
+                    x += ELLIPSIS_W + FOCUS_GAP;
+                }
+            }
+        }
+        const totalW = Math.max(maxX + FOCUS_GAP, 320);
+        return { passLayouts, ellipsisNodes, totalW };
+    }, [focusedView, selectedResourceIds, allAccessMaps, pipeline.timelines]);
+
+    // Effective layout values: use focused layout when active, otherwise full layout
+    const effectivePassLayouts = focusedLayout?.passLayouts ?? layout.passLayouts;
+    const effectiveCanvasW = focusedLayout?.totalW ?? layout.totalW;
 
     // Span info (min/max column x) per resource, used for sorting
     const resourceSpans = useMemo(() => {
@@ -1362,7 +1416,7 @@ export function PipelineTimelineView() {
                         <div
                             className="relative"
                             style={{
-                                width: layout.totalW,
+                                width: effectiveCanvasW,
                                 height: topH,
                                 minWidth: "100%",
                                 position: "relative",
@@ -1371,7 +1425,7 @@ export function PipelineTimelineView() {
                             {/* SVG: row backgrounds, wires, drop indicator, arrows */}
                             <svg
                                 className="absolute inset-0"
-                                width={layout.totalW}
+                                width={effectiveCanvasW}
                                 height={topH}
                                 style={{ overflow: "visible" }}
                             >
@@ -1416,8 +1470,8 @@ export function PipelineTimelineView() {
                                         <path
                                             fillRule="evenodd"
                                             d={[
-                                                `M0 0 H${layout.totalW} V${topH} H0 Z`,
-                                                ...[...layout.passLayouts.values()].map(
+                                                `M0 0 H${effectiveCanvasW} V${topH} H0 Z`,
+                                                ...[...effectivePassLayouts.values()].map(
                                                     ({ x, y }) =>
                                                         `M${x} ${y} H${x + NODE_W} V${y + NODE_H} H${x} Z`,
                                                 ),
@@ -1440,7 +1494,7 @@ export function PipelineTimelineView() {
                                             <rect
                                                 x={0}
                                                 y={rowY}
-                                                width={layout.totalW}
+                                                width={effectiveCanvasW}
                                                 height={ROW_H}
                                                 fill={
                                                     isDepTarget
@@ -1454,7 +1508,7 @@ export function PipelineTimelineView() {
                                                 <rect
                                                     x={0}
                                                     y={rowY}
-                                                    width={layout.totalW}
+                                                    width={effectiveCanvasW}
                                                     height={ROW_H}
                                                     fill="none"
                                                     stroke="#f59e0b"
@@ -1491,8 +1545,8 @@ export function PipelineTimelineView() {
                                     />
                                 )}
 
-                                {/* Arrows */}
-                                {arrowEdges.map((edge) => {
+                                {/* Arrows — hidden in focused view */}
+                                {!focusedLayout && arrowEdges.map((edge) => {
                                     const from = layout.passLayouts.get(edge.fromPassId);
                                     const to = layout.passLayouts.get(edge.toPassId);
                                     if (!from || !to) return null;
@@ -1582,8 +1636,20 @@ export function PipelineTimelineView() {
                                 })}
                             </svg>
 
+                            {/* Ellipsis nodes (focused view only) */}
+                            {focusedLayout?.ellipsisNodes.map((node, i) => (
+                                <div
+                                    key={`ellipsis-${i}`}
+                                    className="absolute flex flex-col items-center justify-center rounded border border-dashed border-zinc-600/60 bg-zinc-800/50 select-none"
+                                    style={{ left: node.x, top: node.y, width: ELLIPSIS_W, height: NODE_H }}
+                                >
+                                    <span className="text-zinc-500 text-[11px] leading-none">…</span>
+                                    <span className="text-zinc-600 text-[9px] font-mono leading-none mt-0.5">{node.count}</span>
+                                </div>
+                            ))}
+
                             {/* Pass nodes */}
-                            {[...layout.passLayouts.values()].map(({ passId, x, y }) => {
+                            {[...effectivePassLayouts.values()].map(({ passId, x, y }) => {
                                 const pass = pipeline.passes[passId];
                                 if (!pass) return null;
                                 const cfg = cfgFor(layout.passTLType.get(passId) ?? "custom");
@@ -1788,8 +1854,8 @@ export function PipelineTimelineView() {
                                 );
                             })}
 
-                            {/* "+ Pass" buttons */}
-                            {pipeline.timelines.map((tl, i) => {
+                            {/* "+ Pass" buttons — hidden in focused view */}
+                            {!focusedLayout && pipeline.timelines.map((tl, i) => {
                                 const bx = layout.addPassX.get(tl.id) ?? COL_GAP / 2;
                                 const by = PAD_T + i * ROW_H + (ROW_H - NODE_H) / 2;
                                 return (
@@ -1876,6 +1942,20 @@ export function PipelineTimelineView() {
                             >
                                 ⇅
                             </button>
+                            {/* Focus view button — only when resources are selected */}
+                            {selectedResourceIds.size > 0 && (
+                                <button
+                                    onClick={() => setFocusedView((v) => !v)}
+                                    className={`text-[9px] px-1 py-0.5 rounded border border-dashed transition-colors font-mono leading-none
+                      ${focusedView
+                          ? "border-violet-500/70 text-violet-400 hover:text-violet-200"
+                          : "border-zinc-700/60 text-zinc-600 hover:text-zinc-300 hover:border-zinc-500"
+                      }`}
+                                    title={focusedView ? "Exit focused view" : "Focused view: compress passes that don't use selected resources"}
+                                >
+                                    ⊟
+                                </button>
+                            )}
                             {/* Add resource button */}
                             <button
                                 ref={addResBtnRef}
@@ -2012,7 +2092,7 @@ export function PipelineTimelineView() {
                             <div
                                 className="relative"
                                 style={{
-                                    width: layout.totalW,
+                                    width: effectiveCanvasW,
                                     height: bottomH,
                                     minWidth: "100%",
                                     position: "relative",
@@ -2021,7 +2101,7 @@ export function PipelineTimelineView() {
                                 {/* SVG: column highlight + overlay row backgrounds/spans */}
                                 <svg
                                     className="absolute inset-0"
-                                    width={layout.totalW}
+                                    width={effectiveCanvasW}
                                     height={bottomH}
                                     style={{ overflow: "visible" }}
                                 >
@@ -2029,7 +2109,7 @@ export function PipelineTimelineView() {
                                     {selectedPassId &&
                                         filteredRows.length > 0 &&
                                         (() => {
-                                            const pl = layout.passLayouts.get(selectedPassId);
+                                            const pl = effectivePassLayouts.get(selectedPassId);
                                             if (!pl) return null;
                                             const h = filteredRows.length * OVERLAY_H;
                                             return (
@@ -2067,7 +2147,7 @@ export function PipelineTimelineView() {
                                     {filteredAccessMaps.map(({ rid, map }, i) => {
                                         const rowY = i * OVERLAY_H;
                                         const isSelected = activeResourceIds.has(rid);
-                                        const xs = [...layout.passLayouts.values()]
+                                        const xs = [...effectivePassLayouts.values()]
                                             .filter(({ passId }) => map.has(passId))
                                             .map(({ x }) => x);
                                         const minX = xs.length > 0 ? Math.min(...xs) : null;
@@ -2176,13 +2256,62 @@ export function PipelineTimelineView() {
                                             </g>
                                         );
                                     })}
+
+                                    {/* Ellipsis columns in resource timeline (focused view) */}
+                                    {focusedLayout?.ellipsisNodes.map((node, i) => {
+                                        const totalH = filteredRows.length * OVERLAY_H;
+                                        if (totalH === 0) return null;
+                                        return (
+                                            <g key={`ell-col-${i}`} style={{ pointerEvents: "none" }}>
+                                                <rect
+                                                    x={node.x}
+                                                    y={0}
+                                                    width={ELLIPSIS_W}
+                                                    height={totalH}
+                                                    fill="rgba(63,63,70,0.18)"
+                                                    rx={2}
+                                                />
+                                                <line
+                                                    x1={node.x}
+                                                    y1={0}
+                                                    x2={node.x}
+                                                    y2={totalH}
+                                                    stroke="#52525b"
+                                                    strokeWidth={1}
+                                                    strokeDasharray="3 3"
+                                                    opacity={0.5}
+                                                />
+                                                <line
+                                                    x1={node.x + ELLIPSIS_W}
+                                                    y1={0}
+                                                    x2={node.x + ELLIPSIS_W}
+                                                    y2={totalH}
+                                                    stroke="#52525b"
+                                                    strokeWidth={1}
+                                                    strokeDasharray="3 3"
+                                                    opacity={0.5}
+                                                />
+                                                <text
+                                                    x={node.x + ELLIPSIS_W / 2}
+                                                    y={totalH / 2}
+                                                    textAnchor="middle"
+                                                    dominantBaseline="middle"
+                                                    fill="#71717a"
+                                                    fontSize={10}
+                                                    fontFamily="monospace"
+                                                >
+                                                    …{node.count}
+                                                </text>
+                                            </g>
+                                        );
+                                    })}
                                 </svg>
 
                                 {/* Overlay R/W/RW badges */}
                                 {filteredAccessMaps.map(({ rid, map }, rowIdx) => {
                                     const name = resolveIds([rid]);
                                     const isDimmed = hasResourceFocus && !activeResourceIds.has(rid);
-                                    return [...layout.passLayouts.values()].map(({ passId, x }) => {
+                                    return [...effectivePassLayouts.values()].map(({ passId, x }) => {
                                         const access = map.get(passId);
                                         if (!access) return null;
                                         const isRW = access === "readwrite";
