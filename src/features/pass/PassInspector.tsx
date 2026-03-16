@@ -6,9 +6,9 @@ import { Textarea } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { FieldRow, InspectorSection } from "../../components/ui/Panel";
 import { TagsInput } from "../../components/ui/TagsInput";
-import { MultiResourceSelect } from "../../components/ui/MultiResourceSelect";
 import { deriveDependencies, getPassDependencies } from "../../utils/dependencyGraph";
-import type { Pass, PassId } from "../../types";
+import { inferPassResources, buildResourceOrigins } from "../../utils/inferStepResources";
+import type { Pass, PassId, Step } from "../../types";
 
 // ─── Dependency display ───────────────────────────────────────────────────────
 
@@ -72,16 +72,36 @@ export function PassInspector() {
         [pass, allEdges],
     );
 
+    // Derive read/write resources from steps (no manual editing)
+    const derivedResources = useMemo(() => {
+        if (!pass) return { reads: [] as string[], writes: [] as string[] };
+        return inferPassResources(pass, pipeline.steps as Record<string, Step>);
+    }, [pass, pipeline.steps]);
+
+    const resourceOrigins = useMemo(() => {
+        if (!pass) return new Map<string, string[]>();
+        return buildResourceOrigins(pass, pipeline.steps as Record<string, Step>);
+    }, [pass, pipeline.steps]);
+
+    // Collect all resolve pairs across this pass's raster steps
+    const resolvesPairs = useMemo(() => {
+        if (!pass) return [] as { source: string; destination: string; stepName: string }[];
+        const pairs: { source: string; destination: string; stepName: string }[] = [];
+        for (const sid of pass.steps) {
+            const step = pipeline.steps[sid];
+            if (step?.type !== "raster") continue;
+            for (const ra of step.attachments.resolveAttachments ?? []) {
+                pairs.push({ source: ra.source, destination: ra.destination, stepName: step.name });
+            }
+        }
+        return pairs;
+    }, [pass, pipeline.steps]);
+
     if (!pass) {
         return (
             <div className="p-4 text-xs text-zinc-500">Select a pass or resource to inspect.</div>
         );
     }
-
-    const allResources = [
-        ...resources.renderTargets.map((r) => ({ value: r.id, label: r.name })),
-        ...resources.buffers.map((b) => ({ value: b.id, label: b.name })),
-    ];
 
     const timelineOpts = pipeline.timelines.map((tl) => ({ value: tl.id, label: tl.name }));
     const timelineNames = new Map(pipeline.timelines.map((tl) => [tl.id, tl.name]));
@@ -125,21 +145,94 @@ export function PassInspector() {
             </InspectorSection>
 
             <InspectorSection title="Resources">
-                <div className="p-3 flex flex-col gap-3">
-                    <MultiResourceSelect
-                        label="Reads"
-                        values={pass.reads}
-                        onChange={(v) => u({ reads: v })}
-                        options={allResources}
-                        placeholder="Add read resource"
-                    />
-                    <MultiResourceSelect
-                        label="Writes"
-                        values={pass.writes}
-                        onChange={(v) => u({ writes: v })}
-                        options={allResources}
-                        placeholder="Add write resource"
-                    />
+                {/* Derived from step definitions — read-only */}
+                {derivedResources.reads.length === 0 && derivedResources.writes.length === 0 ? (
+                    <div className="px-3 py-2 text-[10px] text-zinc-600 italic">
+                        No resources inferred from steps yet.
+                    </div>
+                ) : (
+                    <div className="px-3 py-2 flex flex-col gap-2">
+                        {derivedResources.reads.length > 0 && (
+                            <div className="flex flex-col gap-1">
+                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">
+                                    Reads
+                                </span>
+                                <div className="flex flex-wrap gap-1">
+                                    {derivedResources.reads.map((rid) => {
+                                        const name =
+                                            resources.renderTargets.find((r) => r.id === rid)
+                                                ?.name ??
+                                            resources.buffers.find((b) => b.id === rid)?.name ??
+                                            rid;
+                                        return (
+                                            <span
+                                                key={rid}
+                                                title={resourceOrigins.get(rid)?.join("\n")}
+                                                className="text-[10px] font-mono bg-blue-900/30 text-blue-300 border border-blue-700/40 rounded px-1.5 py-0.5 cursor-default"
+                                            >
+                                                {name}
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                        {derivedResources.writes.length > 0 && (
+                            <div className="flex flex-col gap-1">
+                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">
+                                    Writes
+                                </span>
+                                <div className="flex flex-wrap gap-1">
+                                    {derivedResources.writes.map((rid) => {
+                                        const name =
+                                            resources.renderTargets.find((r) => r.id === rid)
+                                                ?.name ??
+                                            resources.buffers.find((b) => b.id === rid)?.name ??
+                                            rid;
+                                        return (
+                                            <span
+                                                key={rid}
+                                                title={resourceOrigins.get(rid)?.join("\n")}
+                                                className="text-[10px] font-mono bg-amber-900/30 text-amber-300 border border-amber-700/40 rounded px-1.5 py-0.5 cursor-default"
+                                            >
+                                                {name}
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                        {resolvesPairs.length > 0 && (
+                            <div className="flex flex-col gap-1">
+                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">
+                                    Resolves
+                                </span>
+                                <div className="flex flex-col gap-0.5">
+                                    {resolvesPairs.map((rp, i) => {
+                                        const srcName =
+                                            resources.renderTargets.find((r) => r.id === rp.source)?.name ?? rp.source;
+                                        const dstName =
+                                            resources.renderTargets.find((r) => r.id === rp.destination)?.name ?? rp.destination;
+                                        return (
+                                            <div key={i} className="flex items-center gap-1" title={rp.stepName}>
+                                                <span className="text-[10px] font-mono bg-blue-900/30 text-blue-300 border border-blue-700/40 rounded px-1.5 py-0.5">
+                                                    {srcName}
+                                                </span>
+                                                <span className="text-zinc-500 text-[10px]">→</span>
+                                                <span className="text-[10px] font-mono bg-amber-900/30 text-amber-300 border border-amber-700/40 rounded px-1.5 py-0.5">
+                                                    {dstName}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+                <div className="px-3 pb-1 text-[9px] text-zinc-700 italic">
+                    Derived from step definitions. Edit step attachments / shader bindings to
+                    change.
                 </div>
             </InspectorSection>
 

@@ -8,319 +8,337 @@ export type TimelineId = string;
 
 // ─── Resource Library ────────────────────────────────────────────────────────
 
-export type InputParamType =
-  | 'bool'
-  | 'float'
-  | 'uint'
-  | 'int'
-  | 'vec2'
-  | 'vec3'
-  | 'vec4'
-  | 'color';
+export type InputParamType = "bool" | "float" | "uint" | "int" | "vec2" | "vec3" | "vec4" | "color";
 
 export interface InputParameter {
-  id: ResourceId;
-  name: string;
-  type: InputParamType;
-  defaultValue: string;
-  description?: string;
+    id: ResourceId;
+    name: string;
+    type: InputParamType;
+    defaultValue: string;
+    description?: string;
 }
 
 export type TextureFormat =
-  | 'rgba8'
-  | 'rgba16f'
-  | 'rgba32f'
-  | 'r11g11b10f'
-  | 'rg16f'
-  | 'r32f'
-  | 'd32f'
-  | 'd24s8'
-  | 'bc1'
-  | 'bc3'
-  | 'bc5'
-  | 'bc7';
+    | "rgba8"
+    | "rgba16f"
+    | "rgba32f"
+    | "r11g11b10f"
+    | "rg16f"
+    | "r32f"
+    | "d32f"
+    | "d24s8"
+    | "bc1"
+    | "bc3"
+    | "bc5"
+    | "bc7";
 
 export interface RenderTarget {
-  id: ResourceId;
-  name: string;
-  format: TextureFormat;
-  width: number | string;
-  height: number | string;
-  mips: number;
-  layers: number;
-  description?: string;
+    id: ResourceId;
+    name: string;
+    format: TextureFormat;
+    width: number | string;
+    height: number | string;
+    mips: number;
+    layers: number;
+    sampleCount?: number;
+    description?: string;
 }
 
 export interface Buffer {
-  id: ResourceId;
-  name: string;
-  size: number | string;
-  description?: string;
+    id: ResourceId;
+    name: string;
+    size: number | string;
+    description?: string;
 }
 
 export type BlendFactor =
-  | 'zero'
-  | 'one'
-  | 'srcColor'
-  | 'oneMinusSrcColor'
-  | 'dstColor'
-  | 'oneMinusDstColor'
-  | 'srcAlpha'
-  | 'oneMinusSrcAlpha'
-  | 'dstAlpha'
-  | 'oneMinusDstAlpha';
+    | "zero"
+    | "one"
+    | "srcColor"
+    | "oneMinusSrcColor"
+    | "dstColor"
+    | "oneMinusDstColor"
+    | "srcAlpha"
+    | "oneMinusSrcAlpha"
+    | "dstAlpha"
+    | "oneMinusDstAlpha";
 
-export type BlendOp = 'add' | 'subtract' | 'reverseSubtract' | 'min' | 'max';
+export type BlendOp = "add" | "subtract" | "reverseSubtract" | "min" | "max";
 
 export interface BlendState {
-  id: ResourceId;
-  name: string;
-  enabled: boolean;
-  srcColor: BlendFactor;
-  dstColor: BlendFactor;
-  colorOp: BlendOp;
-  srcAlpha: BlendFactor;
-  dstAlpha: BlendFactor;
-  alphaOp: BlendOp;
-  description?: string;
+    id: ResourceId;
+    name: string;
+    enabled: boolean;
+    srcColor: BlendFactor;
+    dstColor: BlendFactor;
+    colorOp: BlendOp;
+    srcAlpha: BlendFactor;
+    dstAlpha: BlendFactor;
+    alphaOp: BlendOp;
+    description?: string;
 }
 
-export type ShaderStage = 'vertex' | 'fragment' | 'compute' | 'raygen' | 'miss' | 'closesthit';
+export type ShaderStage = "vertex" | "fragment" | "compute" | "raygen" | "miss" | "closesthit";
 
 export interface Shader {
-  id: ResourceId;
-  name: string;
-  stage: ShaderStage;
-  path: string;
-  entryPoint: string;
-  description?: string;
+    id: ResourceId;
+    /** Raw 3dverse asset UUID — used to look up the shader descriptor via the API */
+    uuid?: string;
+    name: string;
+    stage: ShaderStage;
+    path: string;
+    entryPoint: string;
+    description?: string;
 }
 
 export interface ResourceLibrary {
-  renderTargets: RenderTarget[];
-  buffers: Buffer[];
-  blendStates: BlendState[];
-  shaders: Shader[];
-  inputParameters: InputParameter[];
+    renderTargets: RenderTarget[];
+    buffers: Buffer[];
+    blendStates: BlendState[];
+    shaders: Shader[];
+    inputParameters: InputParameter[];
 }
 
 // ─── Timeline ─────────────────────────────────────────────────────────────────
 
-export type TimelineType = 'graphics' | 'asyncCompute' | 'transfer' | 'raytracing' | 'custom';
+export type TimelineType = "graphics" | "asyncCompute" | "transfer" | "raytracing" | "custom";
 
 export interface Timeline {
-  id: TimelineId;
-  name: string;
-  type: TimelineType;
-  passIds: PassId[];
+    id: TimelineId;
+    name: string;
+    type: TimelineType;
+    passIds: PassId[];
 }
 
 // ─── Pass ─────────────────────────────────────────────────────────────────────
 
-export type LoadOp = 'load' | 'clear' | 'dontCare';
-export type StoreOp = 'store' | 'dontCare';
+export type LoadOp = "load" | "clear" | "dontCare";
+export type StoreOp = "store" | "dontCare";
 
 export interface ColorAttachment {
-  target: ResourceId;
-  loadOp: LoadOp;
-  storeOp: StoreOp;
-  clearValue: [number, number, number, number];
-  blendState?: ResourceId;
+    target: ResourceId;
+    loadOp: LoadOp;
+    storeOp: StoreOp;
+    clearValue: [number, number, number, number];
+    blendState?: ResourceId;
 }
 
 export interface DepthAttachment {
-  target: ResourceId;
-  loadOp: LoadOp;
-  storeOp: StoreOp;
-  clearValue: number;
-  stencilLoadOp?: LoadOp;
-  stencilStoreOp?: StoreOp;
-  clearStencil?: number;
+    target: ResourceId;
+    loadOp: LoadOp;
+    storeOp: StoreOp;
+    clearValue: number;
+    stencilLoadOp?: LoadOp;
+    stencilStoreOp?: StoreOp;
+    clearStencil?: number;
+}
+
+export interface ResolveAttachment {
+    source: ResourceId;      // MSAA source (read)
+    destination: ResourceId; // resolved target (write)
 }
 
 export interface RasterAttachments {
-  colorAttachments: ColorAttachment[];
-  depthAttachment?: DepthAttachment;
+    colorAttachments: ColorAttachment[];
+    depthAttachment?: DepthAttachment;
+    resolveAttachments?: ResolveAttachment[];
 }
 
 export interface Pass {
-  id: PassId;
-  name: string;
-  timelineId: TimelineId;
-  enabled: boolean;
-  conditions: string[];
-  notes?: string;
-  reads: ResourceId[];
-  writes: ResourceId[];
-  manualDeps?: PassId[];
-  steps: StepId[];
+    id: PassId;
+    name: string;
+    timelineId: TimelineId;
+    enabled: boolean;
+    conditions: string[];
+    notes?: string;
+    reads: ResourceId[];
+    writes: ResourceId[];
+    manualDeps?: PassId[];
+    steps: StepId[];
 }
 
 // ─── Raster Commands ──────────────────────────────────────────────────────────
 
-export type DynamicStateType = 'viewport' | 'scissor' | 'depthBias' | 'stencilRef';
+export type DynamicStateType = "viewport" | "scissor" | "depthBias" | "stencilRef";
 
 export interface SetDynamicStateCommand {
-  id: CommandId;
-  type: 'setDynamicState';
-  name: string;
-  stateType: DynamicStateType;
-  // viewport / scissor rect
-  x?: number;
-  y?: number;
-  width?: number | string;
-  height?: number | string;
-  // viewport depth range
-  minDepth?: number;
-  maxDepth?: number;
-  // depthBias
-  constantFactor?: number;
-  clamp?: number;
-  slopeFactor?: number;
-  // stencilRef
-  reference?: number;
+    id: CommandId;
+    type: "setDynamicState";
+    name: string;
+    stateType: DynamicStateType;
+    // viewport / scissor rect
+    x?: number;
+    y?: number;
+    width?: number | string;
+    height?: number | string;
+    // viewport depth range
+    minDepth?: number;
+    maxDepth?: number;
+    // depthBias
+    constantFactor?: number;
+    clamp?: number;
+    slopeFactor?: number;
+    // stencilRef
+    reference?: number;
 }
 
 export interface DrawBatchCommand {
-  id: CommandId;
-  type: 'drawBatch';
-  name: string;
-  shader: ResourceId;
-  blendState?: ResourceId;
-  depthTest: boolean;
-  depthWrite: boolean;
-  cullMode: 'none' | 'front' | 'back';
-  withMaterials?: boolean;
-  materialSet?: string;
-  batchTag?: string;
+    id: CommandId;
+    type: "drawBatch";
+    name: string;
+    /** Shader resource ID (points to resources.shaders entry whose uuid is the 3dverse UUID) */
+    shader: ResourceId;
+    /** Named shader input slot → resource ID bindings, derived from the shader descriptor */
+    shaderBindings?: Record<string, ResourceId>;
+    /** __renderGraph__.* inputs passed to material shaders (RT ResourceId | number | boolean) */
+    materialInputs?: Record<string, string | number | boolean>;
+    blendState?: ResourceId;
+    depthTest: boolean;
+    depthWrite: boolean;
+    cullMode: "none" | "front" | "back";
+    withMaterials?: boolean;
+    materialSet?: string;
+    batchTag?: string;
 }
 
 export type RasterCommand = SetDynamicStateCommand | DrawBatchCommand;
-export type RasterCommandType = RasterCommand['type'];
+export type RasterCommandType = RasterCommand["type"];
 
 // ─── Steps ────────────────────────────────────────────────────────────────────
 
 export type StepType =
-  | 'raster'
-  | 'dispatchCompute'
-  | 'dispatchRayTracing'
-  | 'copyImage'
-  | 'blitImage'
-  | 'resolveImage'
-  | 'clearImages'
-  | 'fillBuffer'
-  | 'generateMipChain';
+    | "raster"
+    | "dispatchCompute"
+    | "dispatchRayTracing"
+    | "copyImage"
+    | "blitImage"
+    | "resolveImage"
+    | "clearImages"
+    | "fillBuffer"
+    | "generateMipChain";
 
 export interface StepBase {
-  id: StepId;
-  name: string;
-  reads: ResourceId[];
-  writes: ResourceId[];
-  conditions: string[];
+    id: StepId;
+    name: string;
+    reads: ResourceId[];
+    writes: ResourceId[];
+    conditions: string[];
 }
 
 export interface RasterStep extends StepBase {
-  type: 'raster';
-  attachments: RasterAttachments;
-  commands: RasterCommand[];
+    type: "raster";
+    attachments: RasterAttachments;
+    commands: RasterCommand[];
 }
 
 export interface DispatchComputeStep extends StepBase {
-  type: 'dispatchCompute';
-  shader: ResourceId;
-  groupsX: number | string;
-  groupsY: number | string;
-  groupsZ: number | string;
+    type: "dispatchCompute";
+    shader: ResourceId;
+    /** Named shader input slot → resource ID bindings (from shader descriptor) */
+    shaderBindings?: Record<string, ResourceId>;
+    /** Per-slot access decoded from the encoded binding value ('read' | 'write' | 'read_write') */
+    shaderBindingAccess?: Record<string, string>;
+    /** Slot that provides the dispatch size reference (its dimensions drive group counts) */
+    sizeReferenceSlot?: string;
+    groupsX: number | string;
+    groupsY: number | string;
+    groupsZ: number | string;
 }
 
 export interface DispatchRayTracingStep extends StepBase {
-  type: 'dispatchRayTracing';
-  raygenShader: ResourceId;
-  missShader?: ResourceId;
-  closestHitShader?: ResourceId;
-  width: number | string;
-  height: number | string;
+    type: "dispatchRayTracing";
+    raygenShader: ResourceId;
+    missShader?: ResourceId;
+    closestHitShader?: ResourceId;
+    /** Named shader input slot → resource ID bindings (from raygen shader descriptor) */
+    shaderBindings?: Record<string, ResourceId>;
+    /** Per-slot access decoded from the encoded binding value */
+    shaderBindingAccess?: Record<string, string>;
+    /** Slot that provides the dispatch size reference */
+    sizeReferenceSlot?: string;
+    width: number | string;
+    height: number | string;
 }
 
 export interface CopyImageStep extends StepBase {
-  type: 'copyImage';
-  source: ResourceId;
-  destination: ResourceId;
+    type: "copyImage";
+    source: ResourceId;
+    destination: ResourceId;
 }
 
 export interface BlitImageStep extends StepBase {
-  type: 'blitImage';
-  source: ResourceId;
-  destination: ResourceId;
-  filter: 'nearest' | 'linear';
+    type: "blitImage";
+    source: ResourceId;
+    destination: ResourceId;
+    filter: "nearest" | "linear";
 }
 
 export interface ResolveImageStep extends StepBase {
-  type: 'resolveImage';
-  source: ResourceId;
-  destination: ResourceId;
+    type: "resolveImage";
+    source: ResourceId;
+    destination: ResourceId;
 }
 
 export interface ClearTarget {
-  target: ResourceId;
-  clearValue: [number, number, number, number];
+    target: ResourceId;
+    clearValue: [number, number, number, number];
 }
 
 export interface ClearImagesStep extends StepBase {
-  type: 'clearImages';
-  targets: ClearTarget[];
+    type: "clearImages";
+    targets: ClearTarget[];
 }
 
 export interface FillBufferStep extends StepBase {
-  type: 'fillBuffer';
-  target: ResourceId;
-  value: number;
+    type: "fillBuffer";
+    target: ResourceId;
+    value: number;
 }
 
 export interface GenerateMipChainStep extends StepBase {
-  type: 'generateMipChain';
-  target: ResourceId;
-  filter: 'nearest' | 'linear';
+    type: "generateMipChain";
+    target: ResourceId;
+    filter: "nearest" | "linear";
 }
 
 export type Step =
-  | RasterStep
-  | DispatchComputeStep
-  | DispatchRayTracingStep
-  | CopyImageStep
-  | BlitImageStep
-  | ResolveImageStep
-  | ClearImagesStep
-  | FillBufferStep
-  | GenerateMipChainStep;
+    | RasterStep
+    | DispatchComputeStep
+    | DispatchRayTracingStep
+    | CopyImageStep
+    | BlitImageStep
+    | ResolveImageStep
+    | ClearImagesStep
+    | FillBufferStep
+    | GenerateMipChainStep;
 
 // ─── Pipeline ─────────────────────────────────────────────────────────────────
 
 export interface Pipeline {
-  id: string;
-  name: string;
-  version: number;
-  timelines: Timeline[];
-  passes: Record<PassId, Pass>;
-  steps: Record<StepId, Step>;
+    id: string;
+    name: string;
+    version: number;
+    timelines: Timeline[];
+    passes: Record<PassId, Pass>;
+    steps: Record<StepId, Step>;
 }
 
 // ─── Full Document ────────────────────────────────────────────────────────────
 
 export interface PipelineDocument {
-  pipeline: Pipeline;
-  resources: ResourceLibrary;
+    pipeline: Pipeline;
+    resources: ResourceLibrary;
 }
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
-export type ValidationSeverity = 'error' | 'warning';
+export type ValidationSeverity = "error" | "warning";
 
 export interface ValidationIssue {
-  id: string;
-  severity: ValidationSeverity;
-  message: string;
-  location?: string;
+    id: string;
+    severity: ValidationSeverity;
+    message: string;
+    location?: string;
 }
 
 // ─── UI State ─────────────────────────────────────────────────────────────────
