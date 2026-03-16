@@ -1,4 +1,12 @@
-import { useState, useRef, useMemo, useLayoutEffect } from "react";
+import {
+    useState,
+    useRef,
+    useMemo,
+    useLayoutEffect,
+    useCallback,
+    createContext,
+    useContext,
+} from "react";
 import {
     DndContext,
     closestCenter,
@@ -18,7 +26,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useStore } from "../../state/store";
 import { Button } from "../../components/ui/Button";
-import type { Pass, Timeline, TimelineType } from "../../types";
+import type { Pass, PassId, Timeline, TimelineType } from "../../types";
 
 // ─── Timeline type badge colors ───────────────────────────────────────────────
 
@@ -46,6 +54,20 @@ const TL_TYPE_OPTS: { value: TimelineType; label: string }[] = [
     { value: "custom", label: "Custom" },
 ];
 
+// ─── Merge context ───────────────────────────────────────────────────────────
+
+interface MergeCtx {
+    mergeMode: boolean;
+    mergeSelection: Set<PassId>;
+    toggleMerge: (passId: PassId) => void;
+}
+
+const MergeContext = createContext<MergeCtx>({
+    mergeMode: false,
+    mergeSelection: new Set(),
+    toggleMerge: () => undefined,
+});
+
 // ─── Pass row ─────────────────────────────────────────────────────────────────
 
 function PassRow({ pass, timelineId }: { pass: Pass; timelineId: string }) {
@@ -58,7 +80,9 @@ function PassRow({ pass, timelineId }: { pass: Pass; timelineId: string }) {
         pipeline,
         movePassToTimeline,
     } = useStore();
+    const { mergeMode, mergeSelection, toggleMerge } = useContext(MergeContext);
     const isSelected = selectedPassId === pass.id;
+    const isMergeSelected = mergeSelection.has(pass.id);
     const [editing, setEditing] = useState(false);
     const [editName, setEditName] = useState(pass.name);
     const [showMove, setShowMove] = useState(false);
@@ -105,19 +129,36 @@ function PassRow({ pass, timelineId }: { pass: Pass; timelineId: string }) {
             ref={setNodeRef}
             data-pass-id={pass.id}
             style={style}
-            onClick={() => selectPass(pass.id)}
+            onClick={() => (mergeMode ? toggleMerge(pass.id) : selectPass(pass.id))}
             className={`group relative flex flex-col gap-0.5 px-2 py-2 cursor-pointer border-b border-zinc-800/50 hover:bg-zinc-800/40 select-none
-        ${isSelected ? "bg-blue-900/20 border-l-2 border-l-blue-500" : "border-l-2 border-l-transparent"}`}
+        ${isMergeSelected ? "bg-violet-900/25 border-l-2 border-l-violet-500" : isSelected && !mergeMode ? "bg-blue-900/20 border-l-2 border-l-blue-500" : "border-l-2 border-l-transparent"}`}
         >
             <div className="flex items-center gap-1.5">
-                <button
-                    {...attributes}
-                    {...listeners}
-                    onClick={(e) => e.stopPropagation()}
-                    className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing text-xs shrink-0"
-                >
-                    ⠿
-                </button>
+                {mergeMode ? (
+                    <span
+                        className={`shrink-0 w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px] cursor-pointer
+                            ${
+                                isMergeSelected
+                                    ? "bg-violet-600 border-violet-500 text-white"
+                                    : "border-zinc-600 text-transparent"
+                            }`}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            toggleMerge(pass.id);
+                        }}
+                    >
+                        ✓
+                    </span>
+                ) : (
+                    <button
+                        {...attributes}
+                        {...listeners}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing text-xs shrink-0"
+                    >
+                        ⠿
+                    </button>
+                )}
 
                 {editing ? (
                     <input
@@ -443,91 +484,219 @@ function SearchResults({ query, onClose }: { query: string; onClose: () => void 
 // ─── Main sidebar ─────────────────────────────────────────────────────────────
 
 export function PipelineSidebar() {
-    const { pipeline, addTimeline } = useStore();
+    const { pipeline, addTimeline, mergePasses } = useStore();
     const [showAddMenu, setShowAddMenu] = useState(false);
     const [query, setQuery] = useState("");
     const searchRef = useRef<HTMLInputElement>(null);
 
+    // ── Merge mode state ──────────────────────────────────────────────────────
+    const [mergeMode, setMergeMode] = useState(false);
+    const [mergeSelection, setMergeSelection] = useState<Set<PassId>>(new Set());
+    const [mergeName, setMergeName] = useState("");
+
+    const toggleMerge = useCallback((passId: PassId) => {
+        setMergeSelection((prev) => {
+            const next = new Set(prev);
+            if (next.has(passId)) next.delete(passId);
+            else next.add(passId);
+            return next;
+        });
+    }, []);
+
+    const exitMergeMode = () => {
+        setMergeMode(false);
+        setMergeSelection(new Set());
+        setMergeName("");
+    };
+
+    const enterMergeMode = () => {
+        setMergeMode(true);
+        setMergeSelection(new Set());
+        setMergeName("");
+        setQuery(""); // close search if open
+    };
+
+    // Determine merge validity: all selected passes must share a single timeline.
+    const mergePassObjs = [...mergeSelection]
+        .map((id) => pipeline.passes[id])
+        .filter(Boolean) as Pass[];
+    const mergeTimelineIds = new Set(mergePassObjs.map((p) => p.timelineId));
+    const mergeValid = mergeSelection.size >= 2 && mergeTimelineIds.size === 1;
+    const mergeCrossTimeline = mergeSelection.size >= 2 && mergeTimelineIds.size > 1;
+
+    // Build default name from timeline order when selection changes.
+    const firstPassInOrder = useMemo(() => {
+        if (mergePassObjs.length === 0) return null;
+        const tid = [...mergeTimelineIds][0];
+        const tl = pipeline.timelines.find((t) => t.id === tid);
+        if (!tl) return mergePassObjs[0];
+        const first = tl.passIds.find((pid) => mergeSelection.has(pid));
+        return first ? pipeline.passes[first] : mergePassObjs[0];
+    }, [mergeSelection, pipeline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const doMerge = () => {
+        if (!mergeValid) return;
+        const orderedIds = [
+            ...pipeline.timelines
+                .find((tl) => tl.id === [...mergeTimelineIds][0])!
+                .passIds.filter((pid) => mergeSelection.has(pid)),
+        ];
+        mergePasses(orderedIds, mergeName.trim() || undefined);
+        exitMergeMode();
+    };
+
     return (
-        <div className="flex flex-col h-full bg-zinc-900 border-r border-zinc-700/60">
-            {/* Top bar */}
-            <div className="flex flex-col gap-1.5 px-3 py-2 border-b border-zinc-700/60 shrink-0">
-                <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                        Timelines
-                    </span>
-                    <div className="relative">
-                        <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setShowAddMenu(!showAddMenu)}
-                        >
-                            + Timeline
-                        </Button>
-                        {showAddMenu && (
-                            <div className="absolute right-0 top-full mt-1 z-50 bg-zinc-800 border border-zinc-600 rounded shadow-xl w-44">
-                                {TL_TYPE_OPTS.map((opt) => (
-                                    <button
-                                        key={opt.value}
-                                        className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700"
-                                        onClick={() => {
-                                            addTimeline(opt.value);
-                                            setShowAddMenu(false);
-                                        }}
-                                    >
-                                        {opt.label}
-                                    </button>
-                                ))}
+        <MergeContext.Provider value={{ mergeMode, mergeSelection, toggleMerge }}>
+            <div className="flex flex-col h-full bg-zinc-900 border-r border-zinc-700/60">
+                {/* Top bar */}
+                <div className="flex flex-col gap-1.5 px-3 py-2 border-b border-zinc-700/60 shrink-0">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                            Timelines
+                        </span>
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={mergeMode ? exitMergeMode : enterMergeMode}
+                                title={mergeMode ? "Cancel merge" : "Merge passes"}
+                                className={`text-[10px] px-1.5 py-0.5 rounded border font-mono transition-colors
+                                ${
+                                    mergeMode
+                                        ? "bg-violet-900/50 border-violet-600 text-violet-300 hover:bg-violet-800/60"
+                                        : "border-zinc-600 text-zinc-500 hover:text-zinc-300 hover:border-zinc-500"
+                                }`}
+                            >
+                                ⊕ Merge
+                            </button>
+                            <div className="relative">
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => setShowAddMenu(!showAddMenu)}
+                                >
+                                    + Timeline
+                                </Button>
+                                {showAddMenu && (
+                                    <div className="absolute right-0 top-full mt-1 z-50 bg-zinc-800 border border-zinc-600 rounded shadow-xl w-44">
+                                        {TL_TYPE_OPTS.map((opt) => (
+                                            <button
+                                                key={opt.value}
+                                                className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700"
+                                                onClick={() => {
+                                                    addTimeline(opt.value);
+                                                    setShowAddMenu(false);
+                                                }}
+                                            >
+                                                {opt.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
+                        </div>
+                    </div>
+                    {/* Search box */}
+                    {!mergeMode && (
+                        <div className="relative flex items-center">
+                            <span className="absolute left-2 text-zinc-500 text-[10px] pointer-events-none">
+                                ⌕
+                            </span>
+                            <input
+                                ref={searchRef}
+                                value={query}
+                                onChange={(e) => setQuery(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Escape") {
+                                        setQuery("");
+                                        e.currentTarget.blur();
+                                    }
+                                }}
+                                placeholder="Search passes & steps…"
+                                className="w-full bg-zinc-800 text-zinc-200 text-[11px] rounded pl-6 pr-6 py-1 border border-zinc-700/60 focus:outline-none focus:border-sky-600/70 placeholder-zinc-600"
+                            />
+                            {query && (
+                                <button
+                                    className="absolute right-2 text-zinc-500 hover:text-zinc-300 text-[10px]"
+                                    onClick={() => {
+                                        setQuery("");
+                                        searchRef.current?.focus();
+                                    }}
+                                >
+                                    ✕
+                                </button>
+                            )}
+                        </div>
+                    )}
+                    {/* Merge mode hint */}
+                    {mergeMode && (
+                        <p className="text-[10px] text-violet-400/80 leading-tight">
+                            Click passes to select. All must be on the same timeline.
+                        </p>
+                    )}
+                </div>
+
+                {query.trim() && !mergeMode ? (
+                    <SearchResults query={query.trim()} onClose={() => setQuery("")} />
+                ) : (
+                    /* Timeline columns */
+                    <div className="flex flex-1 overflow-hidden">
+                        {pipeline.timelines.length === 0 ? (
+                            <div className="flex-1 flex items-center justify-center text-xs text-zinc-600 p-4 text-center">
+                                No timelines. Click "+ Timeline" to add one.
+                            </div>
+                        ) : (
+                            pipeline.timelines.map((tl) => (
+                                <TimelineColumn key={tl.id} timeline={tl} />
+                            ))
                         )}
                     </div>
-                </div>
-                {/* Search box */}
-                <div className="relative flex items-center">
-                    <span className="absolute left-2 text-zinc-500 text-[10px] pointer-events-none">
-                        ⌕
-                    </span>
-                    <input
-                        ref={searchRef}
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        onKeyDown={(e) => {
-                            if (e.key === "Escape") {
-                                setQuery("");
-                                e.currentTarget.blur();
-                            }
-                        }}
-                        placeholder="Search passes & steps…"
-                        className="w-full bg-zinc-800 text-zinc-200 text-[11px] rounded pl-6 pr-6 py-1 border border-zinc-700/60 focus:outline-none focus:border-sky-600/70 placeholder-zinc-600"
-                    />
-                    {query && (
-                        <button
-                            className="absolute right-2 text-zinc-500 hover:text-zinc-300 text-[10px]"
-                            onClick={() => {
-                                setQuery("");
-                                searchRef.current?.focus();
-                            }}
-                        >
-                            ✕
-                        </button>
-                    )}
-                </div>
-            </div>
+                )}
 
-            {query.trim() ? (
-                <SearchResults query={query.trim()} onClose={() => setQuery("")} />
-            ) : (
-                /* Timeline columns */
-                <div className="flex flex-1 overflow-hidden">
-                    {pipeline.timelines.length === 0 ? (
-                        <div className="flex-1 flex items-center justify-center text-xs text-zinc-600 p-4 text-center">
-                            No timelines. Click "+ Timeline" to add one.
-                        </div>
-                    ) : (
-                        pipeline.timelines.map((tl) => <TimelineColumn key={tl.id} timeline={tl} />)
-                    )}
-                </div>
-            )}
-        </div>
+                {/* ── Merge action bar ──────────────────────────────────────────── */}
+                {mergeMode && mergeSelection.size > 0 && (
+                    <div className="shrink-0 border-t border-violet-700/50 bg-violet-950/40 px-3 py-2 flex flex-col gap-2">
+                        {mergeCrossTimeline ? (
+                            <p className="text-[10px] text-red-400">
+                                Selection spans multiple timelines — passes must be on the same
+                                timeline to merge.
+                            </p>
+                        ) : (
+                            <>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[10px] text-violet-300 font-medium">
+                                        {mergeSelection.size} passes selected
+                                    </span>
+                                    <button
+                                        className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                                        onClick={() => setMergeSelection(new Set())}
+                                    >
+                                        Clear
+                                    </button>
+                                </div>
+                                {mergeSelection.size >= 2 && (
+                                    <>
+                                        <input
+                                            value={mergeName}
+                                            onChange={(e) => setMergeName(e.target.value)}
+                                            placeholder={
+                                                firstPassInOrder?.name ?? "Merged pass name…"
+                                            }
+                                            className="w-full bg-zinc-800 text-zinc-200 text-[11px] rounded px-2 py-1 border border-zinc-600 focus:outline-none focus:border-violet-500 placeholder-zinc-600"
+                                        />
+                                        <Button
+                                            size="sm"
+                                            variant="primary"
+                                            onClick={doMerge}
+                                            className="w-full text-[11px] py-1 bg-violet-700 hover:bg-violet-600 border-violet-600"
+                                        >
+                                            Merge {mergeSelection.size} passes
+                                        </Button>
+                                    </>
+                                )}
+                            </>
+                        )}
+                    </div>
+                )}
+            </div>
+        </MergeContext.Provider>
     );
 }

@@ -43,8 +43,8 @@ const ADD_W = 80;
 const OVERLAY_H = 26;
 const RESOURCE_ZONE_H = 22; // always-visible resource section header
 const STEPS_STRIP_H = 16; // step chips row below pass node
-const ELLIPSIS_W = 48;     // width of a compressed-passes ellipsis node
-const FOCUS_GAP = 14;      // gap between items in focused view
+const ELLIPSIS_W = 48; // width of a compressed-passes ellipsis node
+const FOCUS_GAP = 14; // gap between items in focused view
 
 // ─── Step chip config ─────────────────────────────────────────────────────────
 
@@ -219,6 +219,7 @@ interface DragState {
     sourceTlId: TimelineId;
     targetTlId: TimelineId;
     depTargetPassId: PassId | null; // set when hovering over a different timeline
+    mergeTargetPassId: PassId | null; // set when hovering directly over another pass on same TL
     nodeX: number;
     offsetX: number;
     mouseX: number;
@@ -382,6 +383,7 @@ export function PipelineTimelineView() {
         deletePass,
         duplicatePass,
         updatePass,
+        mergePasses,
         addTimeline,
         deleteTimeline,
         updateTimeline,
@@ -427,7 +429,36 @@ export function PipelineTimelineView() {
 
     const [drag, setDrag] = useState<DragState | null>(null);
     const [dropIdx, setDropIdx] = useState<number | null>(null);
+    const [mergeModal, setMergeModal] = useState<{ passAId: PassId; passBId: PassId } | null>(null);
+    const [mergeModalName, setMergeModalName] = useState("");
     const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
+    // ── Merge mode ─────────────────────────────────────────────────────────
+    const [mergeMode, setMergeMode] = useState(false);
+    const [mergeSelection, setMergeSelection] = useState<Set<PassId>>(new Set());
+    const [mergeName, setMergeName] = useState("");
+
+    const enterMergeWith = useCallback((passId: PassId) => {
+        setMergeMode(true);
+        setMergeSelection(new Set([passId]));
+        setMergeName("");
+        setNodeCtxMenu(null);
+    }, []);
+
+    const exitMerge = useCallback(() => {
+        setMergeMode(false);
+        setMergeSelection(new Set());
+        setMergeName("");
+    }, []);
+
+    const toggleMergePass = useCallback((passId: PassId) => {
+        setMergeSelection((prev) => {
+            const next = new Set(prev);
+            if (next.has(passId)) next.delete(passId);
+            else next.add(passId);
+            return next;
+        });
+    }, []);
+
     const [contextMenu, setContextMenu] = useState<{
         rid: ResourceId;
         x: number;
@@ -469,6 +500,8 @@ export function PipelineTimelineView() {
     const contextMenuRef = useRef<HTMLDivElement>(null);
     const passCtxMenuRef = useRef<HTMLDivElement>(null);
     const nodeCtxMenuRef = useRef<HTMLDivElement>(null);
+    // Suppresses auto-scroll when selection originates from a direct click vs. search/keyboard
+    const noScrollRef = useRef(false);
 
     const topScrollRef = useRef<HTMLDivElement>(null);
     const bottomScrollRef = useRef<HTMLDivElement>(null);
@@ -518,10 +551,14 @@ export function PipelineTimelineView() {
         };
     }, []);
 
-    // Escape clears all selections
+    // Escape clears all selections (or exits merge mode first)
     useEffect(() => {
         const h = (e: globalThis.KeyboardEvent) => {
             if (e.key !== "Escape") return;
+            if (mergeMode) {
+                exitMerge();
+                return;
+            }
             selectPass(null);
             selectStep(null);
             selectResource(null);
@@ -529,21 +566,30 @@ export function PipelineTimelineView() {
         };
         window.addEventListener("keydown", h);
         return () => window.removeEventListener("keydown", h);
-    }, [selectPass, selectStep, selectResource]);
+    }, [selectPass, selectStep, selectResource, mergeMode, exitMerge]);
 
     // Arrow key navigation: left/right between passes, up/down between resources
     const filteredRowsRef = useRef<ResourceId[]>([]);
     const selectedPassIdRef = useRef<PassId | null>(null);
     const selectedResourceIdRef = useRef<ResourceId | null>(null);
     const effectivePassLayoutsRef = useRef<Map<PassId, PassLayout>>(new Map());
-    useEffect(() => { filteredRowsRef.current = filteredRows; });
-    useEffect(() => { selectedPassIdRef.current = selectedPassId; });
-    useEffect(() => { selectedResourceIdRef.current = selectedResourceId; });
-    useEffect(() => { effectivePassLayoutsRef.current = effectivePassLayouts; });
+    useEffect(() => {
+        filteredRowsRef.current = filteredRows;
+    });
+    useEffect(() => {
+        selectedPassIdRef.current = selectedPassId;
+    });
+    useEffect(() => {
+        selectedResourceIdRef.current = selectedResourceId;
+    });
+    useEffect(() => {
+        effectivePassLayoutsRef.current = effectivePassLayouts;
+    });
 
     useEffect(() => {
         const h = (e: globalThis.KeyboardEvent) => {
-            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+                return;
             const pid = selectedPassIdRef.current;
             const rid = selectedResourceIdRef.current;
             if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
@@ -555,7 +601,8 @@ export function PipelineTimelineView() {
                     .filter((id) => effectivePassLayoutsRef.current.has(id));
                 const idx = orderedPassIds.indexOf(pid);
                 if (idx === -1) return;
-                const next = e.key === "ArrowLeft" ? orderedPassIds[idx - 1] : orderedPassIds[idx + 1];
+                const next =
+                    e.key === "ArrowLeft" ? orderedPassIds[idx - 1] : orderedPassIds[idx + 1];
                 if (next) selectPass(next);
             } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
                 const rows = filteredRowsRef.current;
@@ -654,15 +701,37 @@ export function PipelineTimelineView() {
 
     const layout = useLayout(pipeline, allEdges, overlayRows.length);
 
-    // Scroll top canvas to show selected pass (e.g. after global search selection)
+    // Scroll top canvas to show selected pass — only when selection comes from search or keyboard
     useEffect(() => {
         if (!selectedPassId || !topScrollRef.current) return;
+        if (noScrollRef.current) {
+            noScrollRef.current = false;
+            return;
+        }
         const pl = layout.passLayouts.get(selectedPassId);
         if (!pl) return;
         const el = topScrollRef.current;
-        const targetLeft = pl.x - el.clientWidth / 2 + NODE_W / 2;
-        el.scrollTo({ left: Math.max(0, targetLeft), behavior: "instant" });
-    }, [selectedPassId, layout]);
+        el.scrollTo({
+            left: Math.max(0, pl.x - el.clientWidth / 2 + NODE_W / 2),
+            behavior: "instant",
+        });
+    }, [selectedPassId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Scroll resource row into view — only when selection comes from search or keyboard
+    useEffect(() => {
+        if (!selectedResourceId || !bottomLabelsRef.current) return;
+        if (noScrollRef.current) {
+            noScrollRef.current = false;
+            return;
+        }
+        const idx = filteredRows.indexOf(selectedResourceId);
+        if (idx === -1) return;
+        const el = bottomLabelsRef.current;
+        el.scrollTo({
+            top: Math.max(0, idx * OVERLAY_H - el.clientHeight / 2 + OVERLAY_H / 2),
+            behavior: "instant",
+        });
+    }, [selectedResourceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Access map keyed by rid (unordered)
     const allAccessMaps = useMemo(
@@ -674,7 +743,10 @@ export function PipelineTimelineView() {
     type EllipsisNode = { count: number; x: number; y: number };
     const focusedLayout = useMemo(() => {
         if (!focusedView || selectedResourceIds.size === 0) return null;
-        const passLayouts = new Map<PassId, { passId: PassId; x: number; y: number; cx: number; cy: number; row: number }>();
+        const passLayouts = new Map<
+            PassId,
+            { passId: PassId; x: number; y: number; cx: number; cy: number; row: number }
+        >();
         const ellipsisNodes: EllipsisNode[] = [];
         let maxX = 0;
         for (const [tlIdx, tl] of pipeline.timelines.entries()) {
@@ -683,11 +755,18 @@ export function PipelineTimelineView() {
             let i = 0;
             while (i < tl.passIds.length) {
                 const pid = tl.passIds[i];
-                const usesSelected = [...selectedResourceIds].some(
-                    (rid) => allAccessMaps.get(rid)?.has(pid),
+                const usesSelected = [...selectedResourceIds].some((rid) =>
+                    allAccessMaps.get(rid)?.has(pid),
                 );
                 if (usesSelected) {
-                    passLayouts.set(pid, { passId: pid, x, y, cx: x + NODE_W / 2, cy: y + NODE_H / 2, row: tlIdx });
+                    passLayouts.set(pid, {
+                        passId: pid,
+                        x,
+                        y,
+                        cx: x + NODE_W / 2,
+                        cy: y + NODE_H / 2,
+                        row: tlIdx,
+                    });
                     maxX = Math.max(maxX, x + NODE_W);
                     x += NODE_W + FOCUS_GAP;
                     i++;
@@ -695,7 +774,12 @@ export function PipelineTimelineView() {
                     let count = 0;
                     while (i < tl.passIds.length) {
                         const nextPid = tl.passIds[i];
-                        if ([...selectedResourceIds].some((rid) => allAccessMaps.get(rid)?.has(nextPid))) break;
+                        if (
+                            [...selectedResourceIds].some((rid) =>
+                                allAccessMaps.get(rid)?.has(nextPid),
+                            )
+                        )
+                            break;
                         count++;
                         i++;
                     }
@@ -884,17 +968,6 @@ export function PipelineTimelineView() {
         [filteredRows, allAccessMaps],
     );
 
-    // Scroll resource row into view when selectedResourceId changes
-    useEffect(() => {
-        if (!selectedResourceId || !bottomLabelsRef.current) return;
-        const idx = filteredRows.indexOf(selectedResourceId);
-        if (idx === -1) return;
-        const el = bottomLabelsRef.current;
-        const rowY = idx * OVERLAY_H;
-        const targetTop = rowY - el.clientHeight / 2 + OVERLAY_H / 2;
-        el.scrollTo({ top: Math.max(0, targetTop), behavior: "instant" });
-    }, [selectedResourceId, filteredRows]);
-
     const resolveIds = (ids: string[]) =>
         ids.map((id) => rtNames.get(id) ?? bufNames.get(id) ?? id).join(", ");
 
@@ -954,7 +1027,10 @@ export function PipelineTimelineView() {
             if (xs.length === 0) return;
             const minX = Math.min(...xs);
             const el = topScrollRef.current;
-            el.scrollTo({ left: Math.max(0, minX - el.clientWidth / 2 + NODE_W / 2), behavior: "instant" });
+            el.scrollTo({
+                left: Math.max(0, minX - el.clientWidth / 2 + NODE_W / 2),
+                behavior: "instant",
+            });
         },
         [allAccessMaps, layout],
     );
@@ -964,7 +1040,8 @@ export function PipelineTimelineView() {
         const h = (e: globalThis.KeyboardEvent) => {
             if (e.key !== "f" && e.key !== "F") return;
             if (e.repeat) return;
-            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+                return;
             if (selectedResourceIds.size === 0) return;
             const rid = [...selectedResourceIds][selectedResourceIds.size - 1];
             scrollToFirstUse(rid);
@@ -1098,6 +1175,25 @@ export function PipelineTimelineView() {
         [pipeline, layout],
     );
 
+    // Returns the pass directly under the cursor on the same TL (excluding the dragged pass)
+    const computeMergeTarget = useCallback(
+        (mouseX: number, mouseY: number, draggingId: PassId, tlId: TimelineId): PassId | null => {
+            const tl = pipeline.timelines.find((t) => t.id === tlId);
+            if (!tl) return null;
+            const tlIdx = pipeline.timelines.indexOf(tl);
+            const rowTop = PAD_T + tlIdx * ROW_H;
+            if (mouseY < rowTop || mouseY > rowTop + ROW_H) return null;
+            for (const pid of tl.passIds) {
+                if (pid === draggingId) continue;
+                const pl = layout.passLayouts.get(pid);
+                if (!pl) continue;
+                if (mouseX >= pl.x && mouseX <= pl.x + NODE_W) return pid;
+            }
+            return null;
+        },
+        [pipeline, layout],
+    );
+
     const startDrag = useCallback(
         (passId: PassId, tlId: TimelineId, nodeX: number, e: React.MouseEvent) => {
             e.preventDefault();
@@ -1109,6 +1205,7 @@ export function PipelineTimelineView() {
                 sourceTlId: tlId,
                 targetTlId: tlId,
                 depTargetPassId: null,
+                mergeTargetPassId: null,
                 nodeX,
                 offsetX: mx - nodeX,
                 mouseX: mx,
@@ -1126,6 +1223,7 @@ export function PipelineTimelineView() {
             const my = containerMouseY(e.clientY);
             const hitTlId = timelineFromY(my) ?? drag.targetTlId;
             const isCross = hitTlId !== drag.sourceTlId;
+            const mergeTarget = isCross ? null : computeMergeTarget(mx, my, drag.passId, hitTlId);
             setDrag((d) =>
                 d
                     ? {
@@ -1134,10 +1232,11 @@ export function PipelineTimelineView() {
                           mouseY: my,
                           targetTlId: hitTlId,
                           depTargetPassId: isCross ? computeDepTarget(mx, hitTlId) : null,
+                          mergeTargetPassId: mergeTarget,
                       }
                     : null,
             );
-            if (isCross) setDropIdx(null);
+            if (isCross || mergeTarget) setDropIdx(null);
             else setDropIdx(computeDropIndex(mx, drag.passId, hitTlId));
         };
         const onUp = () => {
@@ -1146,8 +1245,13 @@ export function PipelineTimelineView() {
                 if (d.sourceTlId !== d.targetTlId) {
                     // Cross-TL drop: create manual dependency on the pass to the left
                     if (d.depTargetPassId) addManualDep(d.passId, d.depTargetPassId);
+                } else if (d.mergeTargetPassId) {
+                    // Drop onto another pass: show merge modal
+                    const passA = pipeline.passes[d.passId];
+                    setMergeModal({ passAId: d.passId, passBId: d.mergeTargetPassId });
+                    setMergeModalName(passA?.name ?? "Merged pass");
                 } else {
-                    // Same-TL drop: reorder
+                    // Same-TL drop into gap: reorder
                     const tl = pipeline.timelines.find((t) => t.id === d.sourceTlId);
                     if (tl) {
                         const siblings = tl.passIds
@@ -1181,6 +1285,7 @@ export function PipelineTimelineView() {
         containerMouseX,
         containerMouseY,
         timelineFromY,
+        computeMergeTarget,
     ]);
 
     const dropIndicator = useMemo((): { x: number; y: number; h: number; color: string } | null => {
@@ -1402,7 +1507,13 @@ export function PipelineTimelineView() {
                     {/* Pass canvas scroll container */}
                     <div
                         ref={topScrollRef}
-                        style={{ overflowX: "auto", overflowY: "hidden", flex: 1, scrollbarWidth: "none", overscrollBehaviorX: "none" }}
+                        style={{
+                            overflowX: "auto",
+                            overflowY: "hidden",
+                            flex: 1,
+                            scrollbarWidth: "none",
+                            overscrollBehaviorX: "none",
+                        }}
                         onContextMenu={(e) => {
                             e.preventDefault();
                             if (pipeline.timelines.length === 0) return;
@@ -1546,94 +1657,101 @@ export function PipelineTimelineView() {
                                 )}
 
                                 {/* Arrows — hidden in focused view */}
-                                {!focusedLayout && arrowEdges.map((edge) => {
-                                    const from = layout.passLayouts.get(edge.fromPassId);
-                                    const to = layout.passLayouts.get(edge.toPassId);
-                                    if (!from || !to) return null;
-                                    const isCross = edge.isCrossTimeline;
-                                    const isManual = !!edge.isManual;
-                                    const isFocused =
-                                        hoveredEdge === edge.id ||
-                                        (!!selectedPassId &&
-                                            (edge.fromPassId === selectedPassId ||
-                                                edge.toPassId === selectedPassId));
-                                    const stroke = isManual
-                                        ? isFocused
-                                            ? "#fbbf24"
-                                            : "#d97706"
-                                        : isCross
-                                          ? isFocused
-                                              ? "#c084fc"
-                                              : "#9333ea"
-                                          : isFocused
-                                            ? "#71717a"
-                                            : "#3f3f46";
-                                    const strokeW = isManual
-                                        ? isFocused
-                                            ? 2.5
-                                            : 2
-                                        : isCross
-                                          ? isFocused
-                                              ? 2.5
-                                              : 2
-                                          : isFocused
-                                            ? 1.5
-                                            : 1;
-                                    const opacity = isFocused ? 1 : isCross || isManual ? 0.78 : 0.4;
-                                    const markerId = isManual
-                                        ? isFocused
-                                            ? "tlv-amber-hi"
-                                            : "tlv-amber"
-                                        : isCross
-                                          ? isFocused
-                                              ? "tlv-purple-hi"
-                                              : "tlv-purple"
-                                          : isFocused
-                                            ? "tlv-gray-hi"
-                                            : "tlv-gray";
-                                    let d: string;
-                                    if (!isCross) {
-                                        const routeY = from.y + NODE_H + 14;
-                                        d = `M ${from.cx} ${from.y + NODE_H} C ${from.cx} ${routeY}, ${to.cx} ${routeY}, ${to.cx} ${to.y + NODE_H}`;
-                                    } else {
-                                        const x1 = from.x + NODE_W + 2,
-                                            y1 = from.cy;
-                                        const x2 = to.x - 2,
-                                            y2 = to.cy;
-                                        const dx = Math.max(16, (x2 - x1) * 0.45);
-                                        d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
-                                    }
-                                    return (
-                                        <g
-                                            key={edge.id}
-                                            clipPath={isCross ? "url(#tlv-node-mask)" : undefined}
-                                            onMouseEnter={() => setHoveredEdge(edge.id)}
-                                            onMouseLeave={() => setHoveredEdge(null)}
-                                            style={{ cursor: "default" }}
-                                        >
-                                            <path
-                                                d={d}
-                                                fill="none"
-                                                stroke="transparent"
-                                                strokeWidth={10}
-                                            />
-                                            <path
-                                                d={d}
-                                                fill="none"
-                                                stroke={stroke}
-                                                strokeWidth={strokeW}
-                                                opacity={opacity}
-                                                markerEnd={`url(#${markerId})`}
+                                {!focusedLayout &&
+                                    arrowEdges.map((edge) => {
+                                        const from = layout.passLayouts.get(edge.fromPassId);
+                                        const to = layout.passLayouts.get(edge.toPassId);
+                                        if (!from || !to) return null;
+                                        const isCross = edge.isCrossTimeline;
+                                        const isManual = !!edge.isManual;
+                                        const isFocused =
+                                            hoveredEdge === edge.id ||
+                                            (!!selectedPassId &&
+                                                (edge.fromPassId === selectedPassId ||
+                                                    edge.toPassId === selectedPassId));
+                                        const stroke = isManual
+                                            ? isFocused
+                                                ? "#fbbf24"
+                                                : "#d97706"
+                                            : isCross
+                                              ? isFocused
+                                                  ? "#c084fc"
+                                                  : "#9333ea"
+                                              : isFocused
+                                                ? "#71717a"
+                                                : "#3f3f46";
+                                        const strokeW = isManual
+                                            ? isFocused
+                                                ? 2.5
+                                                : 2
+                                            : isCross
+                                              ? isFocused
+                                                  ? 2.5
+                                                  : 2
+                                              : isFocused
+                                                ? 1.5
+                                                : 1;
+                                        const opacity = isFocused
+                                            ? 1
+                                            : isCross || isManual
+                                              ? 0.78
+                                              : 0.4;
+                                        const markerId = isManual
+                                            ? isFocused
+                                                ? "tlv-amber-hi"
+                                                : "tlv-amber"
+                                            : isCross
+                                              ? isFocused
+                                                  ? "tlv-purple-hi"
+                                                  : "tlv-purple"
+                                              : isFocused
+                                                ? "tlv-gray-hi"
+                                                : "tlv-gray";
+                                        let d: string;
+                                        if (!isCross) {
+                                            const routeY = from.y + NODE_H + 14;
+                                            d = `M ${from.cx} ${from.y + NODE_H} C ${from.cx} ${routeY}, ${to.cx} ${routeY}, ${to.cx} ${to.y + NODE_H}`;
+                                        } else {
+                                            const x1 = from.x + NODE_W + 2,
+                                                y1 = from.cy;
+                                            const x2 = to.x - 2,
+                                                y2 = to.cy;
+                                            const dx = Math.max(16, (x2 - x1) * 0.45);
+                                            d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+                                        }
+                                        return (
+                                            <g
+                                                key={edge.id}
+                                                clipPath={
+                                                    isCross ? "url(#tlv-node-mask)" : undefined
+                                                }
+                                                onMouseEnter={() => setHoveredEdge(edge.id)}
+                                                onMouseLeave={() => setHoveredEdge(null)}
+                                                style={{ cursor: "default" }}
                                             >
-                                                <title>
-                                                    {isManual
-                                                        ? "manual sync"
-                                                        : resolveIds(edge.resourceIds)}
-                                                </title>
-                                            </path>
-                                        </g>
-                                    );
-                                })}
+                                                <path
+                                                    d={d}
+                                                    fill="none"
+                                                    stroke="transparent"
+                                                    strokeWidth={10}
+                                                />
+                                                <path
+                                                    d={d}
+                                                    fill="none"
+                                                    stroke={stroke}
+                                                    strokeWidth={strokeW}
+                                                    opacity={opacity}
+                                                    markerEnd={`url(#${markerId})`}
+                                                >
+                                                    <title>
+                                                        {isManual
+                                                            ? "manual sync"
+                                                            : resolveIds(edge.resourceIds)}
+                                                    </title>
+                                                </path>
+                                            </g>
+                                        );
+                                    })}
                             </svg>
 
                             {/* Ellipsis nodes (focused view only) */}
@@ -1641,10 +1759,19 @@ export function PipelineTimelineView() {
                                 <div
                                     key={`ellipsis-${i}`}
                                     className="absolute flex flex-col items-center justify-center rounded border border-dashed border-zinc-600/60 bg-zinc-800/50 select-none"
-                                    style={{ left: node.x, top: node.y, width: ELLIPSIS_W, height: NODE_H }}
+                                    style={{
+                                        left: node.x,
+                                        top: node.y,
+                                        width: ELLIPSIS_W,
+                                        height: NODE_H,
+                                    }}
                                 >
-                                    <span className="text-zinc-500 text-[11px] leading-none">…</span>
-                                    <span className="text-zinc-600 text-[9px] font-mono leading-none mt-0.5">{node.count}</span>
+                                    <span className="text-zinc-500 text-[11px] leading-none">
+                                        …
+                                    </span>
+                                    <span className="text-zinc-600 text-[9px] font-mono leading-none mt-0.5">
+                                        {node.count}
+                                    </span>
                                 </div>
                             ))}
 
@@ -1665,7 +1792,22 @@ export function PipelineTimelineView() {
                                     : 0;
                                 const isWriter = writingPassIds.has(passId);
                                 const isReader = readingPassIds.has(passId);
-                                const isDimmed = selectedResourceIds.size > 0 && !isWriter && !isReader;
+                                const isDimmed =
+                                    !mergeMode &&
+                                    selectedResourceIds.size > 0 &&
+                                    !isWriter &&
+                                    !isReader;
+                                const isMergeSelected = mergeSelection.has(passId);
+                                // In merge mode, dim passes from other timelines
+                                const mergePass = pipeline.passes[passId];
+                                const mergeDimmed =
+                                    mergeMode &&
+                                    mergeSelection.size > 0 &&
+                                    mergePass &&
+                                    [...mergeSelection].some((pid) => pipeline.passes[pid]) &&
+                                    pipeline.passes[[...mergeSelection][0]]?.timelineId !==
+                                        mergePass.timelineId;
+                                const isDragMergeTarget = drag?.mergeTargetPassId === passId;
 
                                 return (
                                     <div
@@ -1692,19 +1834,34 @@ export function PipelineTimelineView() {
                                                 className={`
                             flex items-center rounded border text-xs font-medium
                             transition-colors overflow-hidden
-                            ${isSelected ? `${cfg.nodeHl} shadow-lg` : `${cfg.nodeBg} hover:brightness-125`}
+                            ${
+                                isDragMergeTarget
+                                    ? "bg-violet-900/60 border-violet-400 ring-2 ring-violet-400/80 shadow-violet-900/60 shadow-lg"
+                                    : isMergeSelected
+                                      ? "bg-violet-900/40 border-violet-500 ring-1 ring-violet-400/60"
+                                      : isSelected
+                                        ? `${cfg.nodeHl} shadow-lg`
+                                        : `${cfg.nodeBg} hover:brightness-125`
+                            }
                             ${!pass.enabled ? "opacity-50" : ""}
                             ${isDragging ? "shadow-2xl ring-1 ring-blue-400/50" : ""}
                             ${isDepAnchor ? "ring-2 ring-amber-400/80 shadow-amber-900/40 shadow-lg" : ""}
-                            ${isWriter && !isSelected ? "ring-1 ring-amber-500/80" : ""}
-                            ${isReader && !isWriter && !isSelected ? "ring-1 ring-sky-500/80" : ""}
+                            ${!isDragMergeTarget && !isMergeSelected && isWriter && !isSelected ? "ring-1 ring-amber-500/80" : ""}
+                            ${!isDragMergeTarget && !isMergeSelected && isReader && !isWriter && !isSelected ? "ring-1 ring-sky-500/80" : ""}
+                            ${mergeDimmed ? "opacity-30" : ""}
                           `}
                                                 style={{
                                                     height: NODE_H,
                                                     cursor: isDragging ? "grabbing" : "pointer",
                                                 }}
                                                 onClick={() => {
-                                                    if (!isEditing && !isDragging) selectPass(passId);
+                                                    if (isEditing || isDragging) return;
+                                                    if (mergeMode) {
+                                                        toggleMergePass(passId);
+                                                        return;
+                                                    }
+                                                    noScrollRef.current = true;
+                                                    selectPass(passId);
                                                 }}
                                                 onContextMenu={(e) => {
                                                     e.preventDefault();
@@ -1751,7 +1908,11 @@ export function PipelineTimelineView() {
                                                         <span
                                                             className="block truncate leading-tight"
                                                             onDoubleClick={(e) =>
-                                                                startRenamePass(passId, pass.name, e)
+                                                                startRenamePass(
+                                                                    passId,
+                                                                    pass.name,
+                                                                    e,
+                                                                )
                                                             }
                                                         >
                                                             {pass.name}
@@ -1776,7 +1937,9 @@ export function PipelineTimelineView() {
                                                                     W
                                                                 </span>
                                                             ) : (
-                                                                <span className="text-sky-400">R</span>
+                                                                <span className="text-sky-400">
+                                                                    R
+                                                                </span>
                                                             )}
                                                         </span>
                                                     )}
@@ -1855,25 +2018,26 @@ export function PipelineTimelineView() {
                             })}
 
                             {/* "+ Pass" buttons — hidden in focused view */}
-                            {!focusedLayout && pipeline.timelines.map((tl, i) => {
-                                const bx = layout.addPassX.get(tl.id) ?? COL_GAP / 2;
-                                const by = PAD_T + i * ROW_H + (ROW_H - NODE_H) / 2;
-                                return (
-                                    <button
-                                        key={tl.id}
-                                        onClick={() => addPass(tl.id)}
-                                        className="absolute text-[10px] text-zinc-600 hover:text-zinc-300 border border-dashed border-zinc-700/50 hover:border-zinc-500 rounded px-2 transition-colors whitespace-nowrap"
-                                        style={{
-                                            left: bx,
-                                            top: by,
-                                            height: NODE_H,
-                                            lineHeight: `${NODE_H}px`,
-                                        }}
-                                    >
-                                        + Pass
-                                    </button>
-                                );
-                            })}
+                            {!focusedLayout &&
+                                pipeline.timelines.map((tl, i) => {
+                                    const bx = layout.addPassX.get(tl.id) ?? COL_GAP / 2;
+                                    const by = PAD_T + i * ROW_H + (ROW_H - NODE_H) / 2;
+                                    return (
+                                        <button
+                                            key={tl.id}
+                                            onClick={() => addPass(tl.id)}
+                                            className="absolute text-[10px] text-zinc-600 hover:text-zinc-300 border border-dashed border-zinc-700/50 hover:border-zinc-500 rounded px-2 transition-colors whitespace-nowrap"
+                                            style={{
+                                                left: bx,
+                                                top: by,
+                                                height: NODE_H,
+                                                lineHeight: `${NODE_H}px`,
+                                            }}
+                                        >
+                                            + Pass
+                                        </button>
+                                    );
+                                })}
 
                             {pipeline.timelines.length === 0 && (
                                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
@@ -1947,11 +2111,16 @@ export function PipelineTimelineView() {
                                 <button
                                     onClick={() => setFocusedView((v) => !v)}
                                     className={`text-[9px] px-1 py-0.5 rounded border border-dashed transition-colors font-mono leading-none
-                      ${focusedView
-                          ? "border-violet-500/70 text-violet-400 hover:text-violet-200"
-                          : "border-zinc-700/60 text-zinc-600 hover:text-zinc-300 hover:border-zinc-500"
+                      ${
+                          focusedView
+                              ? "border-violet-500/70 text-violet-400 hover:text-violet-200"
+                              : "border-zinc-700/60 text-zinc-600 hover:text-zinc-300 hover:border-zinc-500"
                       }`}
-                                    title={focusedView ? "Exit focused view" : "Focused view: compress passes that don't use selected resources"}
+                                    title={
+                                        focusedView
+                                            ? "Exit focused view"
+                                            : "Focused view: compress passes that don't use selected resources"
+                                    }
                                 >
                                     ⊟
                                 </button>
@@ -2035,6 +2204,7 @@ export function PipelineTimelineView() {
                                                     sortMode === "manual" && !hasActiveFilter
                                                 }
                                                 onSelect={(e) => {
+                                                    noScrollRef.current = true;
                                                     if (e.ctrlKey || e.metaKey) {
                                                         const next = new Set(selectedResourceIds);
                                                         if (next.has(rid)) {
@@ -2151,7 +2321,8 @@ export function PipelineTimelineView() {
                                             .filter(({ passId }) => map.has(passId))
                                             .map(({ x }) => x);
                                         const minX = xs.length > 0 ? Math.min(...xs) : null;
-                                        const maxX = xs.length > 0 ? Math.max(...xs) + NODE_W : null;
+                                        const maxX =
+                                            xs.length > 0 ? Math.max(...xs) + NODE_W : null;
                                         const isDead = deadWriteIds.has(rid);
                                         const isUnused = unusedIds.has(rid);
                                         const isDimmed = hasResourceFocus && !isSelected;
@@ -2230,7 +2401,9 @@ export function PipelineTimelineView() {
                                                             y={rowY + 1}
                                                             width={maxX - minX}
                                                             height={OVERLAY_H - 2}
-                                                            fill={isSelected ? spanFill : spanFillDim}
+                                                            fill={
+                                                                isSelected ? spanFill : spanFillDim
+                                                            }
                                                             rx={2}
                                                         />
                                                         <line
@@ -2262,7 +2435,10 @@ export function PipelineTimelineView() {
                                         const totalH = filteredRows.length * OVERLAY_H;
                                         if (totalH === 0) return null;
                                         return (
-                                            <g key={`ell-col-${i}`} style={{ pointerEvents: "none" }}>
+                                            <g
+                                                key={`ell-col-${i}`}
+                                                style={{ pointerEvents: "none" }}
+                                            >
                                                 <rect
                                                     x={node.x}
                                                     y={0}
@@ -2310,53 +2486,65 @@ export function PipelineTimelineView() {
                                 {/* Overlay R/W/RW badges */}
                                 {filteredAccessMaps.map(({ rid, map }, rowIdx) => {
                                     const name = resolveIds([rid]);
-                                    const isDimmed = hasResourceFocus && !activeResourceIds.has(rid);
-                                    return [...effectivePassLayouts.values()].map(({ passId, x }) => {
-                                        const access = map.get(passId);
-                                        if (!access) return null;
-                                        const isRW = access === "readwrite";
-                                        const badgeCls =
-                                            access === "read"
-                                                ? "bg-sky-900/70 text-sky-300 border-sky-700/60 hover:bg-sky-800/80"
-                                                : access === "write"
-                                                  ? "bg-amber-900/70 text-amber-300 border-amber-700/60 hover:bg-amber-800/80"
-                                                  : "border-sky-700/60 hover:opacity-90";
-                                        const label =
-                                            access === "readwrite" ? "RW" : access === "read" ? "R" : "W";
-                                        const tooltipAction =
-                                            access === "readwrite" ? "reads & writes" : `${access}s`;
-                                        const rowY = rowIdx * OVERLAY_H;
-                                        return (
-                                            <div
-                                                key={`overlay-${rid}-${passId}`}
-                                                className={`absolute flex items-center justify-center border rounded-sm cursor-pointer text-[9px] font-bold font-mono overflow-hidden transition-opacity ${
-                                                    isRW ? "border-sky-700/60" : badgeCls
-                                                }`}
-                                                style={{
-                                                    left: x + (NODE_W - 28) / 2,
-                                                    top: rowY + (OVERLAY_H - 18) / 2,
-                                                    width: 28,
-                                                    height: 18,
-                                                    opacity: isDimmed ? 0.25 : 1,
-                                                }}
-                                                onClick={() => selectPass(passId)}
-                                                title={`${pipeline.passes[passId]?.name} — ${tooltipAction} ${name}`}
-                                            >
-                                                {isRW ? (
-                                                    <>
-                                                        <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 hover:bg-sky-800/80">
-                                                            R
-                                                        </span>
-                                                        <span className="flex-1 flex items-center justify-center h-full bg-amber-900/70 text-amber-300 hover:bg-amber-800/80">
-                                                            W
-                                                        </span>
-                                                    </>
-                                                ) : (
-                                                    label
-                                                )}
-                                            </div>
-                                        );
-                                    });
+                                    const isDimmed =
+                                        hasResourceFocus && !activeResourceIds.has(rid);
+                                    return [...effectivePassLayouts.values()].map(
+                                        ({ passId, x }) => {
+                                            const access = map.get(passId);
+                                            if (!access) return null;
+                                            const isRW = access === "readwrite";
+                                            const badgeCls =
+                                                access === "read"
+                                                    ? "bg-sky-900/70 text-sky-300 border-sky-700/60 hover:bg-sky-800/80"
+                                                    : access === "write"
+                                                      ? "bg-amber-900/70 text-amber-300 border-amber-700/60 hover:bg-amber-800/80"
+                                                      : "border-sky-700/60 hover:opacity-90";
+                                            const label =
+                                                access === "readwrite"
+                                                    ? "RW"
+                                                    : access === "read"
+                                                      ? "R"
+                                                      : "W";
+                                            const tooltipAction =
+                                                access === "readwrite"
+                                                    ? "reads & writes"
+                                                    : `${access}s`;
+                                            const rowY = rowIdx * OVERLAY_H;
+                                            return (
+                                                <div
+                                                    key={`overlay-${rid}-${passId}`}
+                                                    className={`absolute flex items-center justify-center border rounded-sm cursor-pointer text-[9px] font-bold font-mono overflow-hidden transition-opacity ${
+                                                        isRW ? "border-sky-700/60" : badgeCls
+                                                    }`}
+                                                    style={{
+                                                        left: x + (NODE_W - 28) / 2,
+                                                        top: rowY + (OVERLAY_H - 18) / 2,
+                                                        width: 28,
+                                                        height: 18,
+                                                        opacity: isDimmed ? 0.25 : 1,
+                                                    }}
+                                                    onClick={() => {
+                                                        noScrollRef.current = true;
+                                                        selectPass(passId);
+                                                    }}
+                                                    title={`${pipeline.passes[passId]?.name} — ${tooltipAction} ${name}`}
+                                                >
+                                                    {isRW ? (
+                                                        <>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 hover:bg-sky-800/80">
+                                                                R
+                                                            </span>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-amber-900/70 text-amber-300 hover:bg-amber-800/80">
+                                                                W
+                                                            </span>
+                                                        </>
+                                                    ) : (
+                                                        label
+                                                    )}
+                                                </div>
+                                            );
+                                        },
+                                    );
                                 })}
                             </div>
                         </div>
@@ -2565,7 +2753,10 @@ export function PipelineTimelineView() {
                 >
                     <button
                         className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
-                        onClick={() => { scrollToFirstUse(contextMenu.rid); setContextMenu(null); }}
+                        onClick={() => {
+                            scrollToFirstUse(contextMenu.rid);
+                            setContextMenu(null);
+                        }}
                     >
                         <span className="text-zinc-500">⇤</span> Scroll to first use
                         <span className="ml-auto text-[10px] font-mono text-zinc-600">F</span>
@@ -2586,23 +2777,37 @@ export function PipelineTimelineView() {
                     <div className="my-0.5 border-t border-zinc-700/60" />
                     <button
                         className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
-                        onClick={() => { toggleResourceVisibility(contextMenu.rid); setContextMenu(null); }}
+                        onClick={() => {
+                            toggleResourceVisibility(contextMenu.rid);
+                            setContextMenu(null);
+                        }}
                     >
-                        {hiddenSet.has(contextMenu.rid)
-                            ? <><span className="text-zinc-500">◌</span> Show in timeline</>
-                            : <><span className="text-zinc-500">●</span> Hide from timeline</>
-                        }
+                        {hiddenSet.has(contextMenu.rid) ? (
+                            <>
+                                <span className="text-zinc-500">◌</span> Show in timeline
+                            </>
+                        ) : (
+                            <>
+                                <span className="text-zinc-500">●</span> Hide from timeline
+                            </>
+                        )}
                     </button>
                     <button
                         className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
-                        onClick={() => { hideOthers(contextMenu.rid); setContextMenu(null); }}
+                        onClick={() => {
+                            hideOthers(contextMenu.rid);
+                            setContextMenu(null);
+                        }}
                     >
                         <span className="text-zinc-500">◎</span> Hide others
                     </button>
                     {hiddenResourceIds.length > 0 && (
                         <button
                             className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
-                            onClick={() => { showAllResources(); setContextMenu(null); }}
+                            onClick={() => {
+                                showAllResources();
+                                setContextMenu(null);
+                            }}
                         >
                             <span className="text-zinc-500">○</span> Show all
                         </button>
@@ -2736,6 +2941,14 @@ export function PipelineTimelineView() {
                                 </>
                             )}
                             <div className="border-t border-zinc-700/60 my-0.5" />
+                            <div className="border-t border-zinc-700/60 my-0.5" />
+                            <button
+                                className="w-full text-left px-3 py-1.5 text-xs text-violet-300 hover:bg-zinc-700 flex items-center gap-2"
+                                onClick={() => enterMergeWith(nodeCtxMenu.passId)}
+                            >
+                                <span className="text-[10px]">⊕</span> Merge with…
+                            </button>
+                            <div className="border-t border-zinc-700/60 my-0.5" />
                             <button
                                 className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-zinc-700 flex items-center gap-2"
                                 onClick={(e) => {
@@ -2746,6 +2959,186 @@ export function PipelineTimelineView() {
                                 <span className="text-[10px]">✕</span> Delete
                             </button>
                         </div>
+                    );
+                })()}
+
+            {/* ── Merge-mode action bar ────────────────────────────────────── */}
+            {mergeMode &&
+                (() => {
+                    const selPasses = [...mergeSelection]
+                        .map((pid) => pipeline.passes[pid])
+                        .filter(Boolean);
+                    const tlIds = new Set(selPasses.map((p) => p!.timelineId));
+                    const canMerge = mergeSelection.size >= 2 && tlIds.size === 1;
+                    const crossTl = mergeSelection.size >= 2 && tlIds.size > 1;
+                    const firstTlId = [...tlIds][0];
+                    const firstTl = pipeline.timelines.find((t) => t.id === firstTlId);
+                    return (
+                        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-violet-700/60 rounded-lg shadow-2xl">
+                            <span className="text-[10px] text-violet-400 font-semibold shrink-0">
+                                {mergeSelection.size === 0 ? (
+                                    "Click passes to select"
+                                ) : crossTl ? (
+                                    <span className="text-red-400">Different timelines</span>
+                                ) : (
+                                    `${mergeSelection.size} selected`
+                                )}
+                            </span>
+                            {canMerge && (
+                                <>
+                                    <div className="w-px h-4 bg-zinc-700 shrink-0" />
+                                    <input
+                                        value={mergeName}
+                                        onChange={(e) => setMergeName(e.target.value)}
+                                        placeholder={selPasses[0]?.name ?? "Name…"}
+                                        className="w-36 bg-zinc-800 text-zinc-100 text-xs rounded px-2 py-1 border border-zinc-600 focus:outline-none focus:border-violet-500 placeholder-zinc-600"
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Escape") exitMerge();
+                                        }}
+                                    />
+                                    <button
+                                        onClick={() => {
+                                            const ordered = firstTl?.passIds.filter((pid) =>
+                                                mergeSelection.has(pid),
+                                            ) ?? [...mergeSelection];
+                                            mergePasses(ordered, mergeName.trim() || undefined);
+                                            exitMerge();
+                                        }}
+                                        className="text-xs px-2.5 py-1 rounded bg-violet-700 hover:bg-violet-600 border border-violet-600 text-white transition-colors shrink-0"
+                                    >
+                                        Merge
+                                    </button>
+                                </>
+                            )}
+                            <button
+                                onClick={exitMerge}
+                                className="text-zinc-500 hover:text-zinc-300 text-xs shrink-0 ml-1"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    );
+                })()}
+
+            {/* ── Drag-to-merge modal ──────────────────────────────────────── */}
+            {mergeModal &&
+                (() => {
+                    const passA = pipeline.passes[mergeModal.passAId];
+                    const passB = pipeline.passes[mergeModal.passBId];
+                    const sameTimeline = passA?.timelineId === passB?.timelineId;
+                    return (
+                        <>
+                            <div
+                                className="fixed inset-0 z-[300] bg-black/50"
+                                onClick={() => setMergeModal(null)}
+                            />
+                            <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[301] w-[400px] bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl overflow-hidden">
+                                <div className="px-4 py-3 border-b border-zinc-700/60 flex items-center gap-2">
+                                    <span className="text-[10px] font-bold uppercase tracking-widest text-violet-400">
+                                        ⊕
+                                    </span>
+                                    <span className="text-sm font-semibold text-zinc-200">
+                                        Merge Passes
+                                    </span>
+                                    <button
+                                        onClick={() => setMergeModal(null)}
+                                        className="ml-auto text-zinc-500 hover:text-zinc-300 text-sm"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                                <div className="px-4 py-3 flex flex-col gap-3">
+                                    <div className="flex items-center gap-2 text-xs text-zinc-400">
+                                        <span className="flex-1 text-center px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 truncate">
+                                            {passA?.name ?? mergeModal.passAId}
+                                        </span>
+                                        <span className="text-zinc-600 shrink-0">+</span>
+                                        <span className="flex-1 text-center px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-200 truncate">
+                                            {passB?.name ?? mergeModal.passBId}
+                                        </span>
+                                    </div>
+                                    {!sameTimeline && (
+                                        <p className="text-[11px] text-red-400 text-center">
+                                            These passes are on different timelines and cannot be
+                                            merged.
+                                        </p>
+                                    )}
+                                    {sameTimeline && (
+                                        <>
+                                            <label className="flex flex-col gap-1">
+                                                <span className="text-[10px] text-zinc-500 uppercase tracking-wider">
+                                                    Merged pass name
+                                                </span>
+                                                <input
+                                                    autoFocus
+                                                    value={mergeModalName}
+                                                    onChange={(e) =>
+                                                        setMergeModalName(e.target.value)
+                                                    }
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === "Escape") setMergeModal(null);
+                                                        if (e.key === "Enter") {
+                                                            const tl = pipeline.timelines.find(
+                                                                (t) => t.id === passA?.timelineId,
+                                                            );
+                                                            const ordered = tl?.passIds.filter(
+                                                                (pid) =>
+                                                                    pid === mergeModal.passAId ||
+                                                                    pid === mergeModal.passBId,
+                                                            ) ?? [
+                                                                mergeModal.passAId,
+                                                                mergeModal.passBId,
+                                                            ];
+                                                            mergePasses(
+                                                                ordered,
+                                                                mergeModalName.trim() || undefined,
+                                                            );
+                                                            setMergeModal(null);
+                                                        }
+                                                    }}
+                                                    className="w-full bg-zinc-800 border border-zinc-700 text-zinc-100 text-sm rounded px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-500/60"
+                                                />
+                                            </label>
+                                            <div className="text-[10px] text-zinc-600 leading-relaxed">
+                                                Steps will be concatenated in timeline order.
+                                                Conditions not shared by both passes will be pushed
+                                                down to individual steps.
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                                <div className="px-4 py-3 border-t border-zinc-700/60 flex justify-end gap-2">
+                                    <button
+                                        onClick={() => setMergeModal(null)}
+                                        className="text-xs px-3 py-1.5 rounded text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    {sameTimeline && (
+                                        <button
+                                            onClick={() => {
+                                                const tl = pipeline.timelines.find(
+                                                    (t) => t.id === passA?.timelineId,
+                                                );
+                                                const ordered = tl?.passIds.filter(
+                                                    (pid) =>
+                                                        pid === mergeModal.passAId ||
+                                                        pid === mergeModal.passBId,
+                                                ) ?? [mergeModal.passAId, mergeModal.passBId];
+                                                mergePasses(
+                                                    ordered,
+                                                    mergeModalName.trim() || undefined,
+                                                );
+                                                setMergeModal(null);
+                                            }}
+                                            className="text-xs px-3 py-1.5 rounded bg-violet-700 hover:bg-violet-600 border border-violet-600 text-white transition-colors"
+                                        >
+                                            Merge
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </>
                     );
                 })()}
         </div>
