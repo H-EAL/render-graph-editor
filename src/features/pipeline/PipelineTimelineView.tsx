@@ -426,28 +426,51 @@ export function PipelineTimelineView() {
     const passCtxMenuRef = useRef<HTMLDivElement>(null);
     const nodeCtxMenuRef = useRef<HTMLDivElement>(null);
 
-    const scrollRef = useRef<HTMLDivElement>(null);
-    const labelsRef = useRef<HTMLDivElement>(null);
+    const topScrollRef = useRef<HTMLDivElement>(null);
+    const bottomScrollRef = useRef<HTMLDivElement>(null);
+    const bottomLabelsRef = useRef<HTMLDivElement>(null);
 
-    // Sync vertical scroll bidirectionally
+    // Sync horizontal scroll: top canvas ↔ bottom canvas
     useEffect(() => {
-        const canvas = scrollRef.current;
-        const labels = labelsRef.current;
-        if (!canvas || !labels) return;
+        const top = topScrollRef.current;
+        const bottom = bottomScrollRef.current;
+        if (!top || !bottom) return;
         let syncing = false;
-        const syncFrom = (source: HTMLElement, target: HTMLElement) => () => {
+        const syncH = (src: HTMLElement, dst: HTMLElement) => () => {
             if (syncing) return;
             syncing = true;
-            target.scrollTop = source.scrollTop;
+            dst.scrollLeft = src.scrollLeft;
             syncing = false;
         };
-        const canvasScroll = syncFrom(canvas, labels);
-        const labelsScroll = syncFrom(labels, canvas);
-        canvas.addEventListener("scroll", canvasScroll, { passive: true });
-        labels.addEventListener("scroll", labelsScroll, { passive: true });
+        const topScroll = syncH(top, bottom);
+        const bottomScroll = syncH(bottom, top);
+        top.addEventListener("scroll", topScroll, { passive: true });
+        bottom.addEventListener("scroll", bottomScroll, { passive: true });
         return () => {
-            canvas.removeEventListener("scroll", canvasScroll);
+            top.removeEventListener("scroll", topScroll);
+            bottom.removeEventListener("scroll", bottomScroll);
+        };
+    }, []);
+
+    // Sync vertical scroll: bottom labels ↔ bottom canvas
+    useEffect(() => {
+        const labels = bottomLabelsRef.current;
+        const canvas = bottomScrollRef.current;
+        if (!labels || !canvas) return;
+        let syncing = false;
+        const syncV = (src: HTMLElement, dst: HTMLElement) => () => {
+            if (syncing) return;
+            syncing = true;
+            dst.scrollTop = src.scrollTop;
+            syncing = false;
+        };
+        const labelsScroll = syncV(labels, canvas);
+        const canvasScroll = syncV(canvas, labels);
+        labels.addEventListener("scroll", labelsScroll, { passive: true });
+        canvas.addEventListener("scroll", canvasScroll, { passive: true });
+        return () => {
             labels.removeEventListener("scroll", labelsScroll);
+            canvas.removeEventListener("scroll", canvasScroll);
         };
     }, []);
 
@@ -538,15 +561,14 @@ export function PipelineTimelineView() {
 
     const layout = useLayout(pipeline, allEdges, overlayRows.length);
 
-    // Scroll canvas to show selected pass (e.g. after global search selection)
+    // Scroll top canvas to show selected pass (e.g. after global search selection)
     useEffect(() => {
-        if (!selectedPassId || !scrollRef.current) return;
+        if (!selectedPassId || !topScrollRef.current) return;
         const pl = layout.passLayouts.get(selectedPassId);
         if (!pl) return;
-        const el = scrollRef.current;
+        const el = topScrollRef.current;
         const targetLeft = pl.x - el.clientWidth / 2 + NODE_W / 2;
-        const targetTop = pl.y - el.clientHeight / 2 + NODE_H / 2;
-        el.scrollTo({ left: Math.max(0, targetLeft), top: Math.max(0, targetTop), behavior: "smooth" });
+        el.scrollTo({ left: Math.max(0, targetLeft), behavior: "smooth" });
     }, [selectedPassId, layout]);
 
     // Access map keyed by rid (unordered)
@@ -717,14 +739,14 @@ export function PipelineTimelineView() {
 
     // Scroll resource row into view when selectedResourceId changes
     useEffect(() => {
-        if (!selectedResourceId || !labelsRef.current) return;
+        if (!selectedResourceId || !bottomLabelsRef.current) return;
         const idx = filteredRows.indexOf(selectedResourceId);
         if (idx === -1) return;
-        const el = labelsRef.current;
-        const rowY = layout.overlayY + idx * OVERLAY_H;
+        const el = bottomLabelsRef.current;
+        const rowY = idx * OVERLAY_H;
         const targetTop = rowY - el.clientHeight / 2 + OVERLAY_H / 2;
         el.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
-    }, [selectedResourceId, filteredRows, layout.overlayY]);
+    }, [selectedResourceId, filteredRows]);
 
     const resolveIds = (ids: string[]) =>
         ids.map((id) => rtNames.get(id) ?? bufNames.get(id) ?? id).join(", ");
@@ -830,13 +852,13 @@ export function PipelineTimelineView() {
 
     // ── Pass drag-to-reorder ───────────────────────────────────────────────────
     const containerMouseX = useCallback((clientX: number): number => {
-        const el = scrollRef.current;
+        const el = topScrollRef.current;
         if (!el) return clientX;
         return clientX - el.getBoundingClientRect().left + el.scrollLeft;
     }, []);
 
     const containerMouseY = useCallback((clientY: number): number => {
-        const el = scrollRef.current;
+        const el = topScrollRef.current;
         if (!el) return clientY;
         return clientY - el.getBoundingClientRect().top + el.scrollTop;
     }, []);
@@ -1067,6 +1089,9 @@ export function PipelineTimelineView() {
         return { writingPassIds: writing, readingPassIds: reading };
     }, [pipeline.passes, selectedResourceIds]);
 
+    const topH = PAD_T + pipeline.timelines.length * ROW_H + PAD_B;
+    const bottomH = Math.max(filteredRows.length * OVERLAY_H + 8, 4);
+
     return (
         <div
             className="flex flex-col h-full bg-zinc-900"
@@ -1118,22 +1143,20 @@ export function PipelineTimelineView() {
 
             {/* Body */}
             <div
-                className="flex flex-1 overflow-hidden bg-zinc-950/30"
+                className="flex flex-col flex-1 overflow-hidden bg-zinc-950/30"
                 style={{ cursor: drag ? "grabbing" : undefined }}
             >
-                {/* Labels column */}
-                <div
-                    ref={labelsRef}
-                    className="shrink-0 border-r border-zinc-800/60 bg-zinc-900/80 z-10"
-                    style={{
-                        width: LABEL_W,
-                        overflowX: "hidden",
-                        overflowY: "scroll",
-                        scrollbarWidth: "none",
-                    }}
-                >
-                    <div className="relative" style={{ height: layout.totalH, minHeight: "100%" }}>
-                        {/* Timeline labels */}
+                {/* Top panel: pass canvas */}
+                <div className="flex shrink-0" style={{ height: topH, overflow: "hidden" }}>
+                    {/* Timeline labels column */}
+                    <div
+                        className="shrink-0 border-r border-zinc-800/60 bg-zinc-900/80 z-10 relative"
+                        style={{
+                            width: LABEL_W,
+                            height: topH,
+                            overflow: "hidden",
+                        }}
+                    >
                         {pipeline.timelines.map((tl, i) => {
                             const cfg = cfgFor(tl.type);
                             const passCount = tl.passIds.length;
@@ -1186,14 +1209,493 @@ export function PipelineTimelineView() {
                                 </div>
                             );
                         })}
+                    </div>
 
-                        {/* Resource zone header */}
+                    {/* Pass canvas scroll container */}
+                    <div
+                        ref={topScrollRef}
+                        style={{ overflowX: "auto", overflowY: "hidden", flex: 1, scrollbarWidth: "none" }}
+                        onContextMenu={(e) => {
+                            e.preventDefault();
+                            if (pipeline.timelines.length === 0) return;
+                            const mx = containerMouseX(e.clientX);
+                            const my = containerMouseY(e.clientY);
+                            const tlId = timelineFromY(my);
+                            setPassCtxMenu({ tlId, canvasX: mx, x: e.clientX, y: e.clientY });
+                            setNodeCtxMenu(null);
+                        }}
+                    >
                         <div
-                            className="absolute flex items-center gap-1 px-2 border-t border-zinc-700/50"
+                            className="relative"
                             style={{
-                                left: 0,
-                                top: layout.resourceZoneTop,
-                                width: LABEL_W - 4,
+                                width: layout.totalW,
+                                height: topH,
+                                minWidth: "100%",
+                                position: "relative",
+                            }}
+                        >
+                            {/* SVG: row backgrounds, wires, drop indicator, arrows */}
+                            <svg
+                                className="absolute inset-0"
+                                width={layout.totalW}
+                                height={topH}
+                                style={{ overflow: "visible" }}
+                            >
+                                <defs>
+                                    {(
+                                        [
+                                            "gray",
+                                            "gray-hi",
+                                            "purple",
+                                            "purple-hi",
+                                            "amber",
+                                            "amber-hi",
+                                        ] as const
+                                    ).map((id) => {
+                                        const fill =
+                                            id === "gray"
+                                                ? "#3f3f46"
+                                                : id === "gray-hi"
+                                                  ? "#71717a"
+                                                  : id === "purple"
+                                                    ? "#9333ea"
+                                                    : id === "purple-hi"
+                                                      ? "#c084fc"
+                                                      : id === "amber"
+                                                        ? "#d97706"
+                                                        : "#fbbf24";
+                                        return (
+                                            <marker
+                                                key={id}
+                                                id={`tlv-${id}`}
+                                                markerWidth="7"
+                                                markerHeight="5"
+                                                refX="7"
+                                                refY="2.5"
+                                                orient="auto"
+                                            >
+                                                <polygon points="0 0, 7 2.5, 0 5" fill={fill} />
+                                            </marker>
+                                        );
+                                    })}
+                                    <clipPath id="tlv-node-mask">
+                                        <path
+                                            fillRule="evenodd"
+                                            d={[
+                                                `M0 0 H${layout.totalW} V${topH} H0 Z`,
+                                                ...[...layout.passLayouts.values()].map(
+                                                    ({ x, y }) =>
+                                                        `M${x} ${y} H${x + NODE_W} V${y + NODE_H} H${x} Z`,
+                                                ),
+                                            ].join(" ")}
+                                        />
+                                    </clipPath>
+                                </defs>
+
+                                {/* Timeline row backgrounds + wires */}
+                                {pipeline.timelines.map((tl, i) => {
+                                    const cfg = cfgFor(tl.type);
+                                    const rowY = PAD_T + i * ROW_H;
+                                    const wireY = rowY + ROW_H / 2;
+                                    const isDepTarget =
+                                        drag &&
+                                        drag.sourceTlId !== drag.targetTlId &&
+                                        drag.targetTlId === tl.id;
+                                    return (
+                                        <g key={tl.id} style={{ pointerEvents: "none" }}>
+                                            <rect
+                                                x={0}
+                                                y={rowY}
+                                                width={layout.totalW}
+                                                height={ROW_H}
+                                                fill={
+                                                    isDepTarget
+                                                        ? "rgba(245,158,11,0.08)"
+                                                        : i % 2 === 0
+                                                          ? "rgba(255,255,255,0.015)"
+                                                          : "transparent"
+                                                }
+                                            />
+                                            {isDepTarget && (
+                                                <rect
+                                                    x={0}
+                                                    y={rowY}
+                                                    width={layout.totalW}
+                                                    height={ROW_H}
+                                                    fill="none"
+                                                    stroke="#f59e0b"
+                                                    strokeWidth={1.5}
+                                                    strokeDasharray="4 4"
+                                                    opacity={0.4}
+                                                />
+                                            )}
+                                            <line
+                                                x1={0}
+                                                y1={wireY}
+                                                x2={layout.totalW - 8}
+                                                y2={wireY}
+                                                stroke={cfg.wire}
+                                                strokeWidth={1.5}
+                                                strokeDasharray="6 10"
+                                                opacity={0.28}
+                                            />
+                                        </g>
+                                    );
+                                })}
+
+                                {/* Drop / dep indicator */}
+                                {dropIndicator && (
+                                    <line
+                                        x1={dropIndicator.x}
+                                        y1={dropIndicator.y}
+                                        x2={dropIndicator.x}
+                                        y2={dropIndicator.y + dropIndicator.h}
+                                        stroke={dropIndicator.color}
+                                        strokeWidth={2}
+                                        strokeDasharray="3 3"
+                                        style={{ pointerEvents: "none" }}
+                                    />
+                                )}
+
+                                {/* Arrows */}
+                                {arrowEdges.map((edge) => {
+                                    const from = layout.passLayouts.get(edge.fromPassId);
+                                    const to = layout.passLayouts.get(edge.toPassId);
+                                    if (!from || !to) return null;
+                                    const isCross = edge.isCrossTimeline;
+                                    const isManual = !!edge.isManual;
+                                    const isFocused =
+                                        hoveredEdge === edge.id ||
+                                        (!!selectedPassId &&
+                                            (edge.fromPassId === selectedPassId ||
+                                                edge.toPassId === selectedPassId));
+                                    const stroke = isManual
+                                        ? isFocused
+                                            ? "#fbbf24"
+                                            : "#d97706"
+                                        : isCross
+                                          ? isFocused
+                                              ? "#c084fc"
+                                              : "#9333ea"
+                                          : isFocused
+                                            ? "#71717a"
+                                            : "#3f3f46";
+                                    const strokeW = isManual
+                                        ? isFocused
+                                            ? 2.5
+                                            : 2
+                                        : isCross
+                                          ? isFocused
+                                              ? 2.5
+                                              : 2
+                                          : isFocused
+                                            ? 1.5
+                                            : 1;
+                                    const opacity = isFocused ? 1 : isCross || isManual ? 0.78 : 0.4;
+                                    const markerId = isManual
+                                        ? isFocused
+                                            ? "tlv-amber-hi"
+                                            : "tlv-amber"
+                                        : isCross
+                                          ? isFocused
+                                              ? "tlv-purple-hi"
+                                              : "tlv-purple"
+                                          : isFocused
+                                            ? "tlv-gray-hi"
+                                            : "tlv-gray";
+                                    let d: string;
+                                    if (!isCross) {
+                                        const routeY = from.y + NODE_H + 14;
+                                        d = `M ${from.cx} ${from.y + NODE_H} C ${from.cx} ${routeY}, ${to.cx} ${routeY}, ${to.cx} ${to.y + NODE_H}`;
+                                    } else {
+                                        const x1 = from.x + NODE_W + 2,
+                                            y1 = from.cy;
+                                        const x2 = to.x - 2,
+                                            y2 = to.cy;
+                                        const dx = Math.max(16, (x2 - x1) * 0.45);
+                                        d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+                                    }
+                                    return (
+                                        <g
+                                            key={edge.id}
+                                            clipPath={isCross ? "url(#tlv-node-mask)" : undefined}
+                                            onMouseEnter={() => setHoveredEdge(edge.id)}
+                                            onMouseLeave={() => setHoveredEdge(null)}
+                                            style={{ cursor: "default" }}
+                                        >
+                                            <path
+                                                d={d}
+                                                fill="none"
+                                                stroke="transparent"
+                                                strokeWidth={10}
+                                            />
+                                            <path
+                                                d={d}
+                                                fill="none"
+                                                stroke={stroke}
+                                                strokeWidth={strokeW}
+                                                opacity={opacity}
+                                                markerEnd={`url(#${markerId})`}
+                                            >
+                                                <title>
+                                                    {isManual
+                                                        ? "manual sync"
+                                                        : resolveIds(edge.resourceIds)}
+                                                </title>
+                                            </path>
+                                        </g>
+                                    );
+                                })}
+                            </svg>
+
+                            {/* Pass nodes */}
+                            {[...layout.passLayouts.values()].map(({ passId, x, y }) => {
+                                const pass = pipeline.passes[passId];
+                                if (!pass) return null;
+                                const cfg = cfgFor(layout.passTLType.get(passId) ?? "custom");
+                                const isSelected = passId === selectedPassId;
+                                const isEditing = editPassId === passId;
+                                const isDragging = drag?.passId === passId;
+                                const isDepAnchor =
+                                    !isDragging &&
+                                    drag?.sourceTlId !== drag?.targetTlId &&
+                                    drag?.depTargetPassId === passId;
+                                const translateX = isDragging
+                                    ? drag!.mouseX - drag!.offsetX - drag!.nodeX
+                                    : 0;
+                                const isWriter = writingPassIds.has(passId);
+                                const isReader = readingPassIds.has(passId);
+                                const isDimmed = selectedResourceIds.size > 0 && !isWriter && !isReader;
+
+                                return (
+                                    <div
+                                        key={passId}
+                                        style={{
+                                            transform: isDragging
+                                                ? `translateX(${translateX}px)`
+                                                : undefined,
+                                            zIndex: isDragging ? 50 : undefined,
+                                        }}
+                                    >
+                                        <div
+                                            className="absolute"
+                                            style={{
+                                                left: x,
+                                                top: y,
+                                                width: NODE_W,
+                                                height: NODE_H,
+                                                opacity: isDimmed ? 0.2 : 1,
+                                            }}
+                                        >
+                                            {/* Node */}
+                                            <div
+                                                className={`
+                            flex items-center rounded border text-xs font-medium
+                            transition-colors overflow-hidden
+                            ${isSelected ? `${cfg.nodeHl} shadow-lg` : `${cfg.nodeBg} hover:brightness-125`}
+                            ${!pass.enabled ? "opacity-50" : ""}
+                            ${isDragging ? "shadow-2xl ring-1 ring-blue-400/50" : ""}
+                            ${isDepAnchor ? "ring-2 ring-amber-400/80 shadow-amber-900/40 shadow-lg" : ""}
+                            ${isWriter && !isSelected ? "ring-1 ring-amber-500/80" : ""}
+                            ${isReader && !isWriter && !isSelected ? "ring-1 ring-sky-500/80" : ""}
+                          `}
+                                                style={{
+                                                    height: NODE_H,
+                                                    cursor: isDragging ? "grabbing" : "pointer",
+                                                }}
+                                                onClick={() => {
+                                                    if (!isEditing && !isDragging) selectPass(passId);
+                                                }}
+                                                onContextMenu={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    setNodeCtxMenu({
+                                                        passId,
+                                                        x: e.clientX,
+                                                        y: e.clientY,
+                                                    });
+                                                    setPassCtxMenu(null);
+                                                }}
+                                            >
+                                                <div
+                                                    className="px-1.5 text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing shrink-0 select-none"
+                                                    style={{ fontSize: 11 }}
+                                                    onMouseDown={(e) =>
+                                                        startDrag(passId, pass.timelineId, x, e)
+                                                    }
+                                                >
+                                                    ⠿
+                                                </div>
+                                                <div className="flex-1 min-w-0 pr-2 py-1">
+                                                    {isEditing ? (
+                                                        <input
+                                                            autoFocus
+                                                            value={editPassName}
+                                                            onChange={(e) =>
+                                                                setEditPassName(e.target.value)
+                                                            }
+                                                            onBlur={commitRenamePass}
+                                                            onKeyDown={(
+                                                                e: KeyboardEvent<HTMLInputElement>,
+                                                            ) => {
+                                                                e.stopPropagation();
+                                                                if (e.key === "Enter")
+                                                                    commitRenamePass();
+                                                                if (e.key === "Escape")
+                                                                    setEditPassId(null);
+                                                            }}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            className="w-full bg-transparent text-xs focus:outline-none caret-white"
+                                                        />
+                                                    ) : (
+                                                        <span
+                                                            className="block truncate leading-tight"
+                                                            onDoubleClick={(e) =>
+                                                                startRenamePass(passId, pass.name, e)
+                                                            }
+                                                        >
+                                                            {pass.name}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {!isEditing &&
+                                                    selectedResourceIds.size > 0 &&
+                                                    (isWriter || isReader) && (
+                                                        <span className="shrink-0 pr-1 text-[8px] font-bold font-mono">
+                                                            {isWriter && isReader ? (
+                                                                <>
+                                                                    <span className="text-sky-400">
+                                                                        R
+                                                                    </span>
+                                                                    <span className="text-amber-400">
+                                                                        W
+                                                                    </span>
+                                                                </>
+                                                            ) : isWriter ? (
+                                                                <span className="text-amber-400">
+                                                                    W
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-sky-400">R</span>
+                                                            )}
+                                                        </span>
+                                                    )}
+                                                {!isEditing && !pass.enabled && (
+                                                    <span className="shrink-0 pr-1.5 text-[8px] italic text-zinc-500">
+                                                        off
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Condition tags — above node, right-aligned */}
+                                        {pass.conditions.length > 0 && (
+                                            <div
+                                                className="absolute flex items-center justify-end gap-0.5 overflow-hidden"
+                                                style={{
+                                                    left: x,
+                                                    top: y - BAR_H,
+                                                    width: NODE_W,
+                                                    height: BAR_H,
+                                                    pointerEvents: "none",
+                                                }}
+                                            >
+                                                {pass.conditions.slice(0, 2).map((c) => (
+                                                    <span
+                                                        key={c}
+                                                        className="text-[8px] bg-amber-950/80 text-amber-400 border border-amber-800/60 rounded-sm px-1 font-mono leading-3 truncate shrink-0 max-w-[56px]"
+                                                    >
+                                                        {c}
+                                                    </span>
+                                                ))}
+                                                {pass.conditions.length > 2 && (
+                                                    <span className="text-[8px] text-amber-600/70 font-mono shrink-0">
+                                                        +{pass.conditions.length - 2}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Step chips — below node */}
+                                        {pass.steps.length > 0 && (
+                                            <div
+                                                className="absolute flex items-center gap-0.5 overflow-hidden"
+                                                style={{
+                                                    left: x,
+                                                    top: y + NODE_H + 4,
+                                                    width: NODE_W,
+                                                    height: STEPS_STRIP_H,
+                                                }}
+                                            >
+                                                {pass.steps.slice(0, 6).map((sid) => {
+                                                    const step = pipeline.steps[sid];
+                                                    if (!step) return null;
+                                                    const cls =
+                                                        STEP_CHIP_CLS[step.type] ??
+                                                        "bg-zinc-700/60 text-zinc-400 border-zinc-600/40";
+                                                    return (
+                                                        <span
+                                                            key={sid}
+                                                            className={`text-[7px] font-mono font-bold border rounded-sm px-1 leading-[14px] shrink-0 ${cls}`}
+                                                            title={step.name || step.type}
+                                                        >
+                                                            {STEP_ABBR[step.type] ?? "?"}
+                                                        </span>
+                                                    );
+                                                })}
+                                                {pass.steps.length > 6 && (
+                                                    <span className="text-[8px] text-zinc-600 font-mono shrink-0">
+                                                        +{pass.steps.length - 6}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+
+                            {/* "+ Pass" buttons */}
+                            {pipeline.timelines.map((tl, i) => {
+                                const bx = layout.addPassX.get(tl.id) ?? COL_GAP / 2;
+                                const by = PAD_T + i * ROW_H + (ROW_H - NODE_H) / 2;
+                                return (
+                                    <button
+                                        key={tl.id}
+                                        onClick={() => addPass(tl.id)}
+                                        className="absolute text-[10px] text-zinc-600 hover:text-zinc-300 border border-dashed border-zinc-700/50 hover:border-zinc-500 rounded px-2 transition-colors whitespace-nowrap"
+                                        style={{
+                                            left: bx,
+                                            top: by,
+                                            height: NODE_H,
+                                            lineHeight: `${NODE_H}px`,
+                                        }}
+                                    >
+                                        + Pass
+                                    </button>
+                                );
+                            })}
+
+                            {pipeline.timelines.length === 0 && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                                    <span className="text-xs text-zinc-600">No timelines yet.</span>
+                                    <span className="text-[10px] text-zinc-700">
+                                        Click "+ Timeline" in the toolbar to get started.
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Bottom panel: resource zone */}
+                <div className="flex flex-col flex-1 min-h-0 border-t border-zinc-700/50">
+                    {/* Resource zone header row */}
+                    <div className="flex shrink-0 border-b border-zinc-700/30">
+                        {/* Left cell: Resources label + controls */}
+                        <div
+                            className="shrink-0 flex items-center gap-1 px-2 border-r border-zinc-800/60"
+                            style={{
+                                width: LABEL_W,
                                 height: RESOURCE_ZONE_H,
                                 background: "rgba(0,0,0,0.18)",
                             }}
@@ -1253,14 +1755,24 @@ export function PipelineTimelineView() {
                                 +
                             </button>
                         </div>
-
-                        {/* Sortable resource label rows (DnD) */}
+                        {/* Right cell: empty spacer */}
                         <div
+                            className="flex-1"
+                            style={{ height: RESOURCE_ZONE_H, background: "rgba(0,0,0,0.12)" }}
+                        />
+                    </div>
+
+                    {/* Scrollable resource rows */}
+                    <div className="flex flex-1 min-h-0">
+                        {/* Resource labels column */}
+                        <div
+                            ref={bottomLabelsRef}
+                            className="shrink-0 border-r border-zinc-800/60 bg-zinc-900/80 z-10"
                             style={{
-                                position: "absolute",
-                                top: layout.overlayY,
-                                left: 0,
-                                width: LABEL_W - 4,
+                                width: LABEL_W,
+                                overflowY: "auto",
+                                overflowX: "hidden",
+                                scrollbarWidth: "none",
                             }}
                         >
                             <DndContext
@@ -1351,705 +1863,235 @@ export function PipelineTimelineView() {
                                 </div>
                             )}
                         </div>
-                    </div>
-                </div>
 
-                {/* Scrollable canvas */}
-                <div
-                    ref={scrollRef}
-                    className="flex-1 overflow-auto"
-                    onContextMenu={(e) => {
-                        e.preventDefault();
-                        if (pipeline.timelines.length === 0) return;
-                        const mx = containerMouseX(e.clientX);
-                        const my = containerMouseY(e.clientY);
-                        const tlId = timelineFromY(my);
-                        setPassCtxMenu({ tlId, canvasX: mx, x: e.clientX, y: e.clientY });
-                        setNodeCtxMenu(null);
-                    }}
-                >
-                    <div
-                        className="relative"
-                        style={{
-                            width: layout.totalW,
-                            height: layout.totalH,
-                            minWidth: "100%",
-                            minHeight: "100%",
-                        }}
-                    >
-                        {/* SVG: row backgrounds, overlay separators/spans, wires, arrows */}
-                        <svg
-                            className="absolute inset-0"
-                            width={layout.totalW}
-                            height={layout.totalH}
-                            style={{ overflow: "visible" }}
+                        {/* Resource canvas scroll container */}
+                        <div
+                            ref={bottomScrollRef}
+                            className="flex-1"
+                            style={{ overflow: "auto" }}
                         >
-                            <defs>
-                                {(
-                                    [
-                                        "gray",
-                                        "gray-hi",
-                                        "purple",
-                                        "purple-hi",
-                                        "amber",
-                                        "amber-hi",
-                                    ] as const
-                                ).map((id) => {
-                                    const fill =
-                                        id === "gray"
-                                            ? "#3f3f46"
-                                            : id === "gray-hi"
-                                              ? "#71717a"
-                                              : id === "purple"
-                                                ? "#9333ea"
-                                                : id === "purple-hi"
-                                                  ? "#c084fc"
-                                                  : id === "amber"
-                                                    ? "#d97706"
-                                                    : "#fbbf24";
-                                    return (
-                                        <marker
-                                            key={id}
-                                            id={`tlv-${id}`}
-                                            markerWidth="7"
-                                            markerHeight="5"
-                                            refX="7"
-                                            refY="2.5"
-                                            orient="auto"
-                                        >
-                                            <polygon points="0 0, 7 2.5, 0 5" fill={fill} />
-                                        </marker>
-                                    );
-                                })}
-                                <clipPath id="tlv-node-mask">
-                                    <path
-                                        fillRule="evenodd"
-                                        d={[
-                                            `M0 0 H${layout.totalW} V${layout.totalH} H0 Z`,
-                                            ...[...layout.passLayouts.values()].map(
-                                                ({ x, y }) =>
-                                                    `M${x} ${y} H${x + NODE_W} V${y + NODE_H} H${x} Z`,
-                                            ),
-                                        ].join(" ")}
-                                    />
-                                </clipPath>
-                            </defs>
-
-                            {/* Timeline row backgrounds + wires */}
-                            {pipeline.timelines.map((tl, i) => {
-                                const cfg = cfgFor(tl.type);
-                                const rowY = PAD_T + i * ROW_H;
-                                const wireY = rowY + ROW_H / 2;
-                                const isDepTarget =
-                                    drag &&
-                                    drag.sourceTlId !== drag.targetTlId &&
-                                    drag.targetTlId === tl.id;
-                                return (
-                                    <g key={tl.id} style={{ pointerEvents: "none" }}>
-                                        <rect
-                                            x={0}
-                                            y={rowY}
-                                            width={layout.totalW}
-                                            height={ROW_H}
-                                            fill={
-                                                isDepTarget
-                                                    ? "rgba(245,158,11,0.08)"
-                                                    : i % 2 === 0
-                                                      ? "rgba(255,255,255,0.015)"
-                                                      : "transparent"
-                                            }
-                                        />
-                                        {isDepTarget && (
-                                            <rect
-                                                x={0}
-                                                y={rowY}
-                                                width={layout.totalW}
-                                                height={ROW_H}
-                                                fill="none"
-                                                stroke="#f59e0b"
-                                                strokeWidth={1.5}
-                                                strokeDasharray="4 4"
-                                                opacity={0.4}
-                                            />
-                                        )}
-                                        <line
-                                            x1={0}
-                                            y1={wireY}
-                                            x2={layout.totalW - 8}
-                                            y2={wireY}
-                                            stroke={cfg.wire}
-                                            strokeWidth={1.5}
-                                            strokeDasharray="6 10"
-                                            opacity={0.28}
-                                        />
-                                    </g>
-                                );
-                            })}
-
-                            {/* Resource zone separator + header background */}
-                            <rect
-                                x={0}
-                                y={layout.resourceZoneTop}
-                                width={layout.totalW}
-                                height={RESOURCE_ZONE_H}
-                                fill="rgba(0,0,0,0.12)"
-                                style={{ pointerEvents: "none" }}
-                            />
-                            <line
-                                x1={0}
-                                y1={layout.resourceZoneTop}
-                                x2={layout.totalW}
-                                y2={layout.resourceZoneTop}
-                                stroke="#27272a"
-                                strokeWidth={1.5}
-                                opacity={0.8}
-                                style={{ pointerEvents: "none" }}
-                            />
-
-                            {/* Selected pass column highlight in resource overlay */}
-                            {selectedPassId &&
-                                filteredRows.length > 0 &&
-                                (() => {
-                                    const pl = layout.passLayouts.get(selectedPassId);
-                                    if (!pl) return null;
-                                    const h = filteredRows.length * OVERLAY_H;
-                                    return (
-                                        <g style={{ pointerEvents: "none" }}>
-                                            <rect
-                                                x={pl.x}
-                                                y={layout.overlayY}
-                                                width={NODE_W}
-                                                height={h}
-                                                fill="rgba(147,51,234,0.10)"
-                                            />
-                                            <line
-                                                x1={pl.x}
-                                                y1={layout.overlayY}
-                                                x2={pl.x}
-                                                y2={layout.overlayY + h}
-                                                stroke="#a855f7"
-                                                strokeWidth={1}
-                                                opacity={0.5}
-                                            />
-                                            <line
-                                                x1={pl.x + NODE_W}
-                                                y1={layout.overlayY}
-                                                x2={pl.x + NODE_W}
-                                                y2={layout.overlayY + h}
-                                                stroke="#a855f7"
-                                                strokeWidth={1}
-                                                opacity={0.5}
-                                            />
-                                        </g>
-                                    );
-                                })()}
-
-                            {/* Overlay row backgrounds + lifetime spans */}
-                            {filteredAccessMaps.map(({ rid, map }, i) => {
-                                const rowY = layout.overlayY + i * OVERLAY_H;
-                                const isSelected = activeResourceIds.has(rid);
-                                const xs = [...layout.passLayouts.values()]
-                                    .filter(({ passId }) => map.has(passId))
-                                    .map(({ x }) => x);
-                                const minX = xs.length > 0 ? Math.min(...xs) : null;
-                                const maxX = xs.length > 0 ? Math.max(...xs) + NODE_W : null;
-                                const isDead = deadWriteIds.has(rid);
-                                const isUnused = unusedIds.has(rid);
-                                const isDimmed = hasResourceFocus && !isSelected;
-                                const spanFill = isDead
-                                    ? "rgba(217,119,6,0.18)"
-                                    : isUnused
-                                      ? "rgba(63,63,70,0.22)"
-                                      : "rgba(147,51,234,0.18)";
-                                const spanFillDim = isDead
-                                    ? "rgba(217,119,6,0.10)"
-                                    : isUnused
-                                      ? "rgba(63,63,70,0.12)"
-                                      : "rgba(147,51,234,0.10)";
-                                const edgeStroke = isDead
-                                    ? "#f59e0b"
-                                    : isUnused
-                                      ? "#52525b"
-                                      : "#a855f7";
-                                const rowFill = isSelected
-                                    ? isDead
-                                        ? "rgba(120,53,15,0.18)"
-                                        : isUnused
-                                          ? "rgba(63,63,70,0.22)"
-                                          : "rgba(88,28,135,0.14)"
-                                    : isDead
-                                      ? "rgba(120,53,15,0.06)"
-                                      : isUnused
-                                        ? "rgba(63,63,70,0.10)"
-                                        : "rgba(88,28,135,0.04)";
-                                const sepStroke = isDead
-                                    ? "#92400e"
-                                    : isUnused
-                                      ? "#3f3f46"
-                                      : "#6b21a8";
-                                return (
-                                    <g
-                                        key={rid}
-                                        style={{
-                                            pointerEvents: "none",
-                                            opacity: isDimmed ? 0.25 : 1,
-                                        }}
-                                    >
-                                        <rect
-                                            x={0}
-                                            y={rowY}
-                                            width={layout.totalW}
-                                            height={OVERLAY_H}
-                                            fill={rowFill}
-                                        />
-                                        {isSelected && (
-                                            <rect
-                                                x={0}
-                                                y={rowY}
-                                                width={layout.totalW}
-                                                height={OVERLAY_H}
-                                                fill="none"
-                                                stroke={isDead ? "#f59e0b" : "#a855f7"}
-                                                strokeWidth={1}
-                                                opacity={0.5}
-                                            />
-                                        )}
-                                        <line
-                                            x1={0}
-                                            y1={rowY}
-                                            x2={layout.totalW}
-                                            y2={rowY}
-                                            stroke={sepStroke}
-                                            strokeWidth={1}
-                                            strokeDasharray="4 6"
-                                            opacity={isSelected ? 0.7 : 0.4}
-                                        />
-                                        {minX !== null && maxX !== null && (
-                                            <>
-                                                <rect
-                                                    x={minX}
-                                                    y={rowY + 1}
-                                                    width={maxX - minX}
-                                                    height={OVERLAY_H - 2}
-                                                    fill={isSelected ? spanFill : spanFillDim}
-                                                    rx={2}
-                                                />
-                                                <line
-                                                    x1={minX}
-                                                    y1={rowY + 3}
-                                                    x2={minX}
-                                                    y2={rowY + OVERLAY_H - 3}
-                                                    stroke={edgeStroke}
-                                                    strokeWidth={isSelected ? 2.5 : 2}
-                                                    strokeLinecap="round"
-                                                />
-                                                <line
-                                                    x1={maxX}
-                                                    y1={rowY + 3}
-                                                    x2={maxX}
-                                                    y2={rowY + OVERLAY_H - 3}
-                                                    stroke={edgeStroke}
-                                                    strokeWidth={isSelected ? 2.5 : 2}
-                                                    strokeLinecap="round"
-                                                />
-                                            </>
-                                        )}
-                                    </g>
-                                );
-                            })}
-
-                            {/* Drop / dep indicator */}
-                            {dropIndicator && (
-                                <line
-                                    x1={dropIndicator.x}
-                                    y1={dropIndicator.y}
-                                    x2={dropIndicator.x}
-                                    y2={dropIndicator.y + dropIndicator.h}
-                                    stroke={dropIndicator.color}
-                                    strokeWidth={2}
-                                    strokeDasharray="3 3"
-                                    style={{ pointerEvents: "none" }}
-                                />
-                            )}
-
-                            {/* Arrows */}
-                            {arrowEdges.map((edge) => {
-                                const from = layout.passLayouts.get(edge.fromPassId);
-                                const to = layout.passLayouts.get(edge.toPassId);
-                                if (!from || !to) return null;
-                                const isCross = edge.isCrossTimeline;
-                                const isManual = !!edge.isManual;
-                                const isFocused =
-                                    hoveredEdge === edge.id ||
-                                    (!!selectedPassId &&
-                                        (edge.fromPassId === selectedPassId ||
-                                            edge.toPassId === selectedPassId));
-                                const stroke = isManual
-                                    ? isFocused
-                                        ? "#fbbf24"
-                                        : "#d97706"
-                                    : isCross
-                                      ? isFocused
-                                          ? "#c084fc"
-                                          : "#9333ea"
-                                      : isFocused
-                                        ? "#71717a"
-                                        : "#3f3f46";
-                                const strokeW = isManual
-                                    ? isFocused
-                                        ? 2.5
-                                        : 2
-                                    : isCross
-                                      ? isFocused
-                                          ? 2.5
-                                          : 2
-                                      : isFocused
-                                        ? 1.5
-                                        : 1;
-                                const opacity = isFocused ? 1 : isCross || isManual ? 0.78 : 0.4;
-                                const markerId = isManual
-                                    ? isFocused
-                                        ? "tlv-amber-hi"
-                                        : "tlv-amber"
-                                    : isCross
-                                      ? isFocused
-                                          ? "tlv-purple-hi"
-                                          : "tlv-purple"
-                                      : isFocused
-                                        ? "tlv-gray-hi"
-                                        : "tlv-gray";
-                                let d: string;
-                                if (!isCross) {
-                                    const routeY = from.y + NODE_H + 14;
-                                    d = `M ${from.cx} ${from.y + NODE_H} C ${from.cx} ${routeY}, ${to.cx} ${routeY}, ${to.cx} ${to.y + NODE_H}`;
-                                } else {
-                                    const x1 = from.x + NODE_W + 2,
-                                        y1 = from.cy;
-                                    const x2 = to.x - 2,
-                                        y2 = to.cy;
-                                    const dx = Math.max(16, (x2 - x1) * 0.45);
-                                    d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
-                                }
-                                return (
-                                    <g
-                                        key={edge.id}
-                                        clipPath={isCross ? "url(#tlv-node-mask)" : undefined}
-                                        onMouseEnter={() => setHoveredEdge(edge.id)}
-                                        onMouseLeave={() => setHoveredEdge(null)}
-                                        style={{ cursor: "default" }}
-                                    >
-                                        <path
-                                            d={d}
-                                            fill="none"
-                                            stroke="transparent"
-                                            strokeWidth={10}
-                                        />
-                                        <path
-                                            d={d}
-                                            fill="none"
-                                            stroke={stroke}
-                                            strokeWidth={strokeW}
-                                            opacity={opacity}
-                                            markerEnd={`url(#${markerId})`}
-                                        >
-                                            <title>
-                                                {isManual
-                                                    ? "manual sync"
-                                                    : resolveIds(edge.resourceIds)}
-                                            </title>
-                                        </path>
-                                    </g>
-                                );
-                            })}
-                        </svg>
-
-                        {/* Pass nodes */}
-                        {[...layout.passLayouts.values()].map(({ passId, x, y }) => {
-                            const pass = pipeline.passes[passId];
-                            if (!pass) return null;
-                            const cfg = cfgFor(layout.passTLType.get(passId) ?? "custom");
-                            const isSelected = passId === selectedPassId;
-                            const isEditing = editPassId === passId;
-                            const isDragging = drag?.passId === passId;
-                            const isDepAnchor =
-                                !isDragging &&
-                                drag?.sourceTlId !== drag?.targetTlId &&
-                                drag?.depTargetPassId === passId;
-                            const translateX = isDragging
-                                ? drag!.mouseX - drag!.offsetX - drag!.nodeX
-                                : 0;
-                            const isWriter = writingPassIds.has(passId);
-                            const isReader = readingPassIds.has(passId);
-                            const isDimmed = selectedResourceIds.size > 0 && !isWriter && !isReader;
-
-                            return (
-                                <div
-                                    key={passId}
-                                    style={{
-                                        transform: isDragging
-                                            ? `translateX(${translateX}px)`
-                                            : undefined,
-                                        zIndex: isDragging ? 50 : undefined,
-                                    }}
+                            <div
+                                className="relative"
+                                style={{
+                                    width: layout.totalW,
+                                    height: bottomH,
+                                    minWidth: "100%",
+                                    position: "relative",
+                                }}
+                            >
+                                {/* SVG: column highlight + overlay row backgrounds/spans */}
+                                <svg
+                                    className="absolute inset-0"
+                                    width={layout.totalW}
+                                    height={bottomH}
+                                    style={{ overflow: "visible" }}
                                 >
-                                    <div
-                                        className="absolute"
-                                        style={{
-                                            left: x,
-                                            top: y,
-                                            width: NODE_W,
-                                            height: NODE_H,
-                                            opacity: isDimmed ? 0.2 : 1,
-                                        }}
-                                    >
-                                        {/* Node */}
-                                        <div
-                                            className={`
-                        flex items-center rounded border text-xs font-medium
-                        transition-colors overflow-hidden
-                        ${isSelected ? `${cfg.nodeHl} shadow-lg` : `${cfg.nodeBg} hover:brightness-125`}
-                        ${!pass.enabled ? "opacity-50" : ""}
-                        ${isDragging ? "shadow-2xl ring-1 ring-blue-400/50" : ""}
-                        ${isDepAnchor ? "ring-2 ring-amber-400/80 shadow-amber-900/40 shadow-lg" : ""}
-                        ${isWriter && !isSelected ? "ring-1 ring-amber-500/80" : ""}
-                        ${isReader && !isWriter && !isSelected ? "ring-1 ring-sky-500/80" : ""}
-                      `}
-                                            style={{
-                                                height: NODE_H,
-                                                cursor: isDragging ? "grabbing" : "pointer",
-                                            }}
-                                            onClick={() => {
-                                                if (!isEditing && !isDragging) selectPass(passId);
-                                            }}
-                                            onContextMenu={(e) => {
-                                                e.preventDefault();
-                                                e.stopPropagation();
-                                                setNodeCtxMenu({
-                                                    passId,
-                                                    x: e.clientX,
-                                                    y: e.clientY,
-                                                });
-                                                setPassCtxMenu(null);
-                                            }}
-                                        >
-                                            <div
-                                                className="px-1.5 text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing shrink-0 select-none"
-                                                style={{ fontSize: 11 }}
-                                                onMouseDown={(e) =>
-                                                    startDrag(passId, pass.timelineId, x, e)
-                                                }
-                                            >
-                                                ⠿
-                                            </div>
-                                            <div className="flex-1 min-w-0 pr-2 py-1">
-                                                {isEditing ? (
-                                                    <input
-                                                        autoFocus
-                                                        value={editPassName}
-                                                        onChange={(e) =>
-                                                            setEditPassName(e.target.value)
-                                                        }
-                                                        onBlur={commitRenamePass}
-                                                        onKeyDown={(
-                                                            e: KeyboardEvent<HTMLInputElement>,
-                                                        ) => {
-                                                            e.stopPropagation();
-                                                            if (e.key === "Enter")
-                                                                commitRenamePass();
-                                                            if (e.key === "Escape")
-                                                                setEditPassId(null);
-                                                        }}
-                                                        onClick={(e) => e.stopPropagation()}
-                                                        className="w-full bg-transparent text-xs focus:outline-none caret-white"
+                                    {/* Selected pass column highlight in resource overlay */}
+                                    {selectedPassId &&
+                                        filteredRows.length > 0 &&
+                                        (() => {
+                                            const pl = layout.passLayouts.get(selectedPassId);
+                                            if (!pl) return null;
+                                            const h = filteredRows.length * OVERLAY_H;
+                                            return (
+                                                <g style={{ pointerEvents: "none" }}>
+                                                    <rect
+                                                        x={pl.x}
+                                                        y={0}
+                                                        width={NODE_W}
+                                                        height={h}
+                                                        fill="rgba(147,51,234,0.10)"
                                                     />
+                                                    <line
+                                                        x1={pl.x}
+                                                        y1={0}
+                                                        x2={pl.x}
+                                                        y2={h}
+                                                        stroke="#a855f7"
+                                                        strokeWidth={1}
+                                                        opacity={0.5}
+                                                    />
+                                                    <line
+                                                        x1={pl.x + NODE_W}
+                                                        y1={0}
+                                                        x2={pl.x + NODE_W}
+                                                        y2={h}
+                                                        stroke="#a855f7"
+                                                        strokeWidth={1}
+                                                        opacity={0.5}
+                                                    />
+                                                </g>
+                                            );
+                                        })()}
+
+                                    {/* Overlay row backgrounds + lifetime spans */}
+                                    {filteredAccessMaps.map(({ rid, map }, i) => {
+                                        const rowY = i * OVERLAY_H;
+                                        const isSelected = activeResourceIds.has(rid);
+                                        const xs = [...layout.passLayouts.values()]
+                                            .filter(({ passId }) => map.has(passId))
+                                            .map(({ x }) => x);
+                                        const minX = xs.length > 0 ? Math.min(...xs) : null;
+                                        const maxX = xs.length > 0 ? Math.max(...xs) + NODE_W : null;
+                                        const isDead = deadWriteIds.has(rid);
+                                        const isUnused = unusedIds.has(rid);
+                                        const isDimmed = hasResourceFocus && !isSelected;
+                                        const spanFill = isDead
+                                            ? "rgba(217,119,6,0.18)"
+                                            : isUnused
+                                              ? "rgba(63,63,70,0.22)"
+                                              : "rgba(147,51,234,0.18)";
+                                        const spanFillDim = isDead
+                                            ? "rgba(217,119,6,0.10)"
+                                            : isUnused
+                                              ? "rgba(63,63,70,0.12)"
+                                              : "rgba(147,51,234,0.10)";
+                                        const edgeStroke = isDead
+                                            ? "#f59e0b"
+                                            : isUnused
+                                              ? "#52525b"
+                                              : "#a855f7";
+                                        const rowFill = isSelected
+                                            ? isDead
+                                                ? "rgba(120,53,15,0.18)"
+                                                : isUnused
+                                                  ? "rgba(63,63,70,0.22)"
+                                                  : "rgba(88,28,135,0.14)"
+                                            : isDead
+                                              ? "rgba(120,53,15,0.06)"
+                                              : isUnused
+                                                ? "rgba(63,63,70,0.10)"
+                                                : "rgba(88,28,135,0.04)";
+                                        const sepStroke = isDead
+                                            ? "#92400e"
+                                            : isUnused
+                                              ? "#3f3f46"
+                                              : "#6b21a8";
+                                        return (
+                                            <g
+                                                key={rid}
+                                                style={{
+                                                    pointerEvents: "none",
+                                                    opacity: isDimmed ? 0.25 : 1,
+                                                }}
+                                            >
+                                                <rect
+                                                    x={0}
+                                                    y={rowY}
+                                                    width={layout.totalW}
+                                                    height={OVERLAY_H}
+                                                    fill={rowFill}
+                                                />
+                                                {isSelected && (
+                                                    <rect
+                                                        x={0}
+                                                        y={rowY}
+                                                        width={layout.totalW}
+                                                        height={OVERLAY_H}
+                                                        fill="none"
+                                                        stroke={isDead ? "#f59e0b" : "#a855f7"}
+                                                        strokeWidth={1}
+                                                        opacity={0.5}
+                                                    />
+                                                )}
+                                                <line
+                                                    x1={0}
+                                                    y1={rowY}
+                                                    x2={layout.totalW}
+                                                    y2={rowY}
+                                                    stroke={sepStroke}
+                                                    strokeWidth={1}
+                                                    strokeDasharray="4 6"
+                                                    opacity={isSelected ? 0.7 : 0.4}
+                                                />
+                                                {minX !== null && maxX !== null && (
+                                                    <>
+                                                        <rect
+                                                            x={minX}
+                                                            y={rowY + 1}
+                                                            width={maxX - minX}
+                                                            height={OVERLAY_H - 2}
+                                                            fill={isSelected ? spanFill : spanFillDim}
+                                                            rx={2}
+                                                        />
+                                                        <line
+                                                            x1={minX}
+                                                            y1={rowY + 3}
+                                                            x2={minX}
+                                                            y2={rowY + OVERLAY_H - 3}
+                                                            stroke={edgeStroke}
+                                                            strokeWidth={isSelected ? 2.5 : 2}
+                                                            strokeLinecap="round"
+                                                        />
+                                                        <line
+                                                            x1={maxX}
+                                                            y1={rowY + 3}
+                                                            x2={maxX}
+                                                            y2={rowY + OVERLAY_H - 3}
+                                                            stroke={edgeStroke}
+                                                            strokeWidth={isSelected ? 2.5 : 2}
+                                                            strokeLinecap="round"
+                                                        />
+                                                    </>
+                                                )}
+                                            </g>
+                                        );
+                                    })}
+                                </svg>
+
+                                {/* Overlay R/W/RW badges */}
+                                {filteredAccessMaps.map(({ rid, map }, rowIdx) => {
+                                    const name = resolveIds([rid]);
+                                    const isDimmed = hasResourceFocus && !activeResourceIds.has(rid);
+                                    return [...layout.passLayouts.values()].map(({ passId, x }) => {
+                                        const access = map.get(passId);
+                                        if (!access) return null;
+                                        const isRW = access === "readwrite";
+                                        const badgeCls =
+                                            access === "read"
+                                                ? "bg-sky-900/70 text-sky-300 border-sky-700/60 hover:bg-sky-800/80"
+                                                : access === "write"
+                                                  ? "bg-amber-900/70 text-amber-300 border-amber-700/60 hover:bg-amber-800/80"
+                                                  : "border-sky-700/60 hover:opacity-90";
+                                        const label =
+                                            access === "readwrite" ? "RW" : access === "read" ? "R" : "W";
+                                        const tooltipAction =
+                                            access === "readwrite" ? "reads & writes" : `${access}s`;
+                                        const rowY = rowIdx * OVERLAY_H;
+                                        return (
+                                            <div
+                                                key={`overlay-${rid}-${passId}`}
+                                                className={`absolute flex items-center justify-center border rounded-sm cursor-pointer text-[9px] font-bold font-mono overflow-hidden transition-opacity ${
+                                                    isRW ? "border-sky-700/60" : badgeCls
+                                                }`}
+                                                style={{
+                                                    left: x + (NODE_W - 28) / 2,
+                                                    top: rowY + (OVERLAY_H - 18) / 2,
+                                                    width: 28,
+                                                    height: 18,
+                                                    opacity: isDimmed ? 0.25 : 1,
+                                                }}
+                                                onClick={() => selectPass(passId)}
+                                                title={`${pipeline.passes[passId]?.name} — ${tooltipAction} ${name}`}
+                                            >
+                                                {isRW ? (
+                                                    <>
+                                                        <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 hover:bg-sky-800/80">
+                                                            R
+                                                        </span>
+                                                        <span className="flex-1 flex items-center justify-center h-full bg-amber-900/70 text-amber-300 hover:bg-amber-800/80">
+                                                            W
+                                                        </span>
+                                                    </>
                                                 ) : (
-                                                    <span
-                                                        className="block truncate leading-tight"
-                                                        onDoubleClick={(e) =>
-                                                            startRenamePass(passId, pass.name, e)
-                                                        }
-                                                    >
-                                                        {pass.name}
-                                                    </span>
+                                                    label
                                                 )}
                                             </div>
-                                            {!isEditing &&
-                                                selectedResourceIds.size > 0 &&
-                                                (isWriter || isReader) && (
-                                                    <span className="shrink-0 pr-1 text-[8px] font-bold font-mono">
-                                                        {isWriter && isReader ? (
-                                                            <>
-                                                                <span className="text-sky-400">
-                                                                    R
-                                                                </span>
-                                                                <span className="text-amber-400">
-                                                                    W
-                                                                </span>
-                                                            </>
-                                                        ) : isWriter ? (
-                                                            <span className="text-amber-400">
-                                                                W
-                                                            </span>
-                                                        ) : (
-                                                            <span className="text-sky-400">R</span>
-                                                        )}
-                                                    </span>
-                                                )}
-                                            {!isEditing && !pass.enabled && (
-                                                <span className="shrink-0 pr-1.5 text-[8px] italic text-zinc-500">
-                                                    off
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* Condition tags — above node, right-aligned */}
-                                    {pass.conditions.length > 0 && (
-                                        <div
-                                            className="absolute flex items-center justify-end gap-0.5 overflow-hidden"
-                                            style={{
-                                                left: x,
-                                                top: y - BAR_H,
-                                                width: NODE_W,
-                                                height: BAR_H,
-                                                pointerEvents: "none",
-                                            }}
-                                        >
-                                            {pass.conditions.slice(0, 2).map((c) => (
-                                                <span
-                                                    key={c}
-                                                    className="text-[8px] bg-amber-950/80 text-amber-400 border border-amber-800/60 rounded-sm px-1 font-mono leading-3 truncate shrink-0 max-w-[56px]"
-                                                >
-                                                    {c}
-                                                </span>
-                                            ))}
-                                            {pass.conditions.length > 2 && (
-                                                <span className="text-[8px] text-amber-600/70 font-mono shrink-0">
-                                                    +{pass.conditions.length - 2}
-                                                </span>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {/* Step chips — below node */}
-                                    {pass.steps.length > 0 && (
-                                        <div
-                                            className="absolute flex items-center gap-0.5 overflow-hidden"
-                                            style={{
-                                                left: x,
-                                                top: y + NODE_H + 4,
-                                                width: NODE_W,
-                                                height: STEPS_STRIP_H,
-                                            }}
-                                        >
-                                            {pass.steps.slice(0, 6).map((sid) => {
-                                                const step = pipeline.steps[sid];
-                                                if (!step) return null;
-                                                const cls =
-                                                    STEP_CHIP_CLS[step.type] ??
-                                                    "bg-zinc-700/60 text-zinc-400 border-zinc-600/40";
-                                                return (
-                                                    <span
-                                                        key={sid}
-                                                        className={`text-[7px] font-mono font-bold border rounded-sm px-1 leading-[14px] shrink-0 ${cls}`}
-                                                        title={step.name || step.type}
-                                                    >
-                                                        {STEP_ABBR[step.type] ?? "?"}
-                                                    </span>
-                                                );
-                                            })}
-                                            {pass.steps.length > 6 && (
-                                                <span className="text-[8px] text-zinc-600 font-mono shrink-0">
-                                                    +{pass.steps.length - 6}
-                                                </span>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })}
-
-                        {/* Overlay R/W/RW badges */}
-                        {filteredAccessMaps.map(({ rid, map }, rowIdx) => {
-                            const name = resolveIds([rid]);
-                            const isDimmed = hasResourceFocus && !activeResourceIds.has(rid);
-                            return [...layout.passLayouts.values()].map(({ passId, x }) => {
-                                const access = map.get(passId);
-                                if (!access) return null;
-                                const isRW = access === "readwrite";
-                                const badgeCls =
-                                    access === "read"
-                                        ? "bg-sky-900/70 text-sky-300 border-sky-700/60 hover:bg-sky-800/80"
-                                        : access === "write"
-                                          ? "bg-amber-900/70 text-amber-300 border-amber-700/60 hover:bg-amber-800/80"
-                                          : "border-sky-700/60 hover:opacity-90";
-                                const label =
-                                    access === "readwrite" ? "RW" : access === "read" ? "R" : "W";
-                                const tooltipAction =
-                                    access === "readwrite" ? "reads & writes" : `${access}s`;
-                                const rowY = layout.overlayY + rowIdx * OVERLAY_H;
-                                return (
-                                    <div
-                                        key={`overlay-${rid}-${passId}`}
-                                        className={`absolute flex items-center justify-center border rounded-sm cursor-pointer text-[9px] font-bold font-mono overflow-hidden transition-opacity ${
-                                            isRW ? "border-sky-700/60" : badgeCls
-                                        }`}
-                                        style={{
-                                            left: x + (NODE_W - 28) / 2,
-                                            top: rowY + (OVERLAY_H - 18) / 2,
-                                            width: 28,
-                                            height: 18,
-                                            opacity: isDimmed ? 0.25 : 1,
-                                        }}
-                                        onClick={() => selectPass(passId)}
-                                        title={`${pipeline.passes[passId]?.name} — ${tooltipAction} ${name}`}
-                                    >
-                                        {isRW ? (
-                                            <>
-                                                <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 hover:bg-sky-800/80">
-                                                    R
-                                                </span>
-                                                <span className="flex-1 flex items-center justify-center h-full bg-amber-900/70 text-amber-300 hover:bg-amber-800/80">
-                                                    W
-                                                </span>
-                                            </>
-                                        ) : (
-                                            label
-                                        )}
-                                    </div>
-                                );
-                            });
-                        })}
-
-                        {/* "+ Pass" buttons */}
-                        {pipeline.timelines.map((tl, i) => {
-                            const bx = layout.addPassX.get(tl.id) ?? COL_GAP / 2;
-                            const by = PAD_T + i * ROW_H + (ROW_H - NODE_H) / 2;
-                            return (
-                                <button
-                                    key={tl.id}
-                                    onClick={() => addPass(tl.id)}
-                                    className="absolute text-[10px] text-zinc-600 hover:text-zinc-300 border border-dashed border-zinc-700/50 hover:border-zinc-500 rounded px-2 transition-colors whitespace-nowrap"
-                                    style={{
-                                        left: bx,
-                                        top: by,
-                                        height: NODE_H,
-                                        lineHeight: `${NODE_H}px`,
-                                    }}
-                                >
-                                    + Pass
-                                </button>
-                            );
-                        })}
-
-                        {pipeline.timelines.length === 0 && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                                <span className="text-xs text-zinc-600">No timelines yet.</span>
-                                <span className="text-[10px] text-zinc-700">
-                                    Click "+ Timeline" in the toolbar to get started.
-                                </span>
+                                        );
+                                    });
+                                })}
                             </div>
-                        )}
+                        </div>
                     </div>
                 </div>
             </div>

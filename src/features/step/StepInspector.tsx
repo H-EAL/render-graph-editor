@@ -102,6 +102,16 @@ function ColorAttachmentRow({
                     options={rtOpts}
                 />
             </FieldRow>
+            {attachedRt && (
+                <FieldRow label="Format">
+                    <span className="text-xs font-mono text-zinc-400">{attachedRt.format}</span>
+                </FieldRow>
+            )}
+            {attachedRt && (attachedRt.sampleCount ?? 1) > 1 && (
+                <FieldRow label="Samples">
+                    <span className="text-xs font-mono text-zinc-400">×{attachedRt.sampleCount}</span>
+                </FieldRow>
+            )}
             <FieldRow label="Load Op">
                 <Select
                     options={LOAD_OPS}
@@ -172,6 +182,9 @@ function DepthAttachmentSection({ step }: { step: RasterStep }) {
         .filter((r) => r.format.startsWith("d"))
         .map((r) => ({ value: r.id, label: r.name }));
     const dep = step.attachments.depthAttachment;
+    const attachedRt = dep?.target
+        ? resources.renderTargets.find((r) => r.id === dep.target)
+        : undefined;
 
     const updateDep = (patch: Partial<DepthAttachment>) => {
         updateStep(step.id, {
@@ -221,6 +234,16 @@ function DepthAttachmentSection({ step }: { step: RasterStep }) {
                     allowEmpty
                 />
             </FieldRow>
+            {attachedRt && (
+                <FieldRow label="Format">
+                    <span className="text-xs font-mono text-zinc-400">{attachedRt.format}</span>
+                </FieldRow>
+            )}
+            {attachedRt && (attachedRt.sampleCount ?? 1) > 1 && (
+                <FieldRow label="Samples">
+                    <span className="text-xs font-mono text-zinc-400">×{attachedRt.sampleCount}</span>
+                </FieldRow>
+            )}
             <FieldRow label="Load Op">
                 <Select
                     options={LOAD_OPS}
