@@ -27,6 +27,8 @@ import type {
     Shader,
     InputParameter,
     ResourceId,
+    InputDefinition,
+    InputId,
 } from "../types";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -172,6 +174,7 @@ export interface AppState {
     // Data
     pipeline: Pipeline;
     resources: ResourceLibrary;
+    inputDefinitions: InputDefinition[];
 
     // Selection
     selectedPassId: PassId | null;
@@ -282,6 +285,12 @@ export interface AppState {
     hideOthers: (id: ResourceId) => void;
     showAllResources: () => void;
 
+    // ── Input Definition actions ───────────────────────────────────────────────
+    addInputDefinition: (patch: Omit<InputDefinition, "id">) => void;
+    updateInputDefinition: (id: InputId, patch: Partial<InputDefinition>) => void;
+    deleteInputDefinition: (id: InputId) => void;
+    reorderInputDefinitions: (ids: InputId[]) => void;
+
     // ── IO ────────────────────────────────────────────────────────────────────
     loadDocument: (json: string) => void;
     getDocumentJson: () => string;
@@ -289,6 +298,101 @@ export interface AppState {
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
+
+// ─── Seed input definitions (AO example) ─────────────────────────────────────
+
+const defaultInputDefinitions: InputDefinition[] = [
+    {
+        id: "enable_ao",
+        label: "Enable AO",
+        description: "Toggle ambient occlusion",
+        kind: "bool",
+        defaultValue: true,
+        categoryPath: ["Post Processing", "Ambient Occlusion"],
+        userFacing: true,
+        order: 0,
+    },
+    {
+        id: "ao_technique",
+        label: "AO Technique",
+        description: "Algorithm used for AO computation",
+        kind: "enum",
+        defaultValue: "ssao",
+        categoryPath: ["Post Processing", "Ambient Occlusion"],
+        userFacing: true,
+        order: 1,
+        enumOptions: [
+            { value: "ssao", label: "SSAO" },
+            { value: "hbao", label: "HBAO" },
+            { value: "gtao", label: "GTAO" },
+        ],
+        visibilityCondition: {
+            type: "comparison",
+            leftInput: "enable_ao",
+            operator: "==",
+            rightValue: true,
+        },
+    },
+    {
+        id: "ao_radius",
+        label: "AO Radius",
+        description: "World-space radius of occlusion sampling",
+        kind: "float",
+        defaultValue: 0.5,
+        categoryPath: ["Post Processing", "Ambient Occlusion"],
+        userFacing: true,
+        order: 2,
+        min: 0.01,
+        max: 5.0,
+        step: 0.01,
+        visibilityCondition: {
+            type: "comparison",
+            leftInput: "enable_ao",
+            operator: "==",
+            rightValue: true,
+        },
+    },
+    {
+        id: "ao_sample_count",
+        label: "Sample Count",
+        description: "Number of AO samples per pixel",
+        kind: "int",
+        defaultValue: 16,
+        categoryPath: ["Post Processing", "Ambient Occlusion"],
+        advanced: true,
+        order: 3,
+        min: 4,
+        max: 64,
+        step: 4,
+        visibilityCondition: {
+            type: "and",
+            conditions: [
+                { type: "comparison", leftInput: "enable_ao", operator: "==", rightValue: true },
+                { type: "comparison", leftInput: "ao_technique", operator: "==", rightValue: "ssao" },
+            ],
+        },
+    },
+    {
+        id: "ao_ray_length",
+        label: "Ray Length",
+        description: "Maximum ray length for HBAO",
+        kind: "float",
+        defaultValue: 1.0,
+        categoryPath: ["Post Processing", "Ambient Occlusion"],
+        advanced: true,
+        order: 4,
+        min: 0.1,
+        max: 10.0,
+        step: 0.1,
+        visibilityCondition: {
+            type: "and",
+            conditions: [
+                { type: "comparison", leftInput: "enable_ao", operator: "==", rightValue: true },
+                { type: "comparison", leftInput: "ao_technique", operator: "==", rightValue: "hbao" },
+            ],
+        },
+    },
+];
 
 function firstPassId(pipeline: Pipeline): PassId | null {
     for (const tl of pipeline.timelines) {
@@ -307,6 +411,7 @@ export const useStore = create<AppState>()(
     subscribeWithSelector((set, get) => ({
         pipeline: rgDocument.pipeline,
         resources: rgDocument.resources,
+        inputDefinitions: defaultInputDefinitions,
         selectedPassId: null,
         selectedStepId: null,
         selectedCommandId: null,
@@ -1387,6 +1492,37 @@ export const useStore = create<AppState>()(
                 resourceOrder: s.resourceOrder.filter((rid) => rid !== id),
                 selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
             })),
+
+        // ── Input Definitions ─────────────────────────────────────────────────
+        addInputDefinition: (patch) =>
+            set((s) => ({
+                inputDefinitions: [
+                    ...s.inputDefinitions,
+                    { ...patch, id: newId() } as InputDefinition,
+                ],
+            })),
+
+        updateInputDefinition: (id, patch) =>
+            set((s) => ({
+                inputDefinitions: s.inputDefinitions.map((d) =>
+                    d.id === id ? { ...d, ...patch } : d,
+                ),
+            })),
+
+        deleteInputDefinition: (id) =>
+            set((s) => ({
+                inputDefinitions: s.inputDefinitions.filter((d) => d.id !== id),
+            })),
+
+        reorderInputDefinitions: (ids) =>
+            set((s) => {
+                const map = new Map(s.inputDefinitions.map((d) => [d.id, d]));
+                return {
+                    inputDefinitions: ids
+                        .map((id) => map.get(id))
+                        .filter((d): d is InputDefinition => !!d),
+                };
+            }),
 
         // ── IO ────────────────────────────────────────────────────────────────
         loadDocument: (json) => {

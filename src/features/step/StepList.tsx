@@ -390,7 +390,7 @@ export function StepList({ passId, variantId }: StepListProps) {
   const activeLabel = variant ? `${variant.name} Steps` : 'Active Steps';
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         {/* ── Active / Variant Steps ── */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700/60">
@@ -414,8 +414,8 @@ export function StepList({ passId, variantId }: StepListProps) {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
-          <div className="flex-1">
+        <div className="flex flex-col">
+          <div>
             {activeIds.length === 0 ? (
               <EmptyDropZone id={CONTAINER_ACTIVE} label="No steps — drop here or click Add Step" />
             ) : (

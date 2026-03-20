@@ -10,6 +10,7 @@ import { JsonPreviewPanel } from "./JsonPreviewPanel";
 import { GlobalSearch } from "./GlobalSearch";
 import { validateDocument } from "../validation";
 import { StatsModal } from "../features/stats/StatsModal";
+import { InputEditorPanel } from "../features/inputs/InputEditorPanel";
 import { computeMemStats, formatBytes } from "../utils/memoryStats";
 
 // ─── Resize hooks ─────────────────────────────────────────────────────────────
@@ -126,12 +127,14 @@ function PipelineHeader({
     activeExample,
     onSelectExample,
     onOpenSearch,
+    onOpenInputs,
 }: {
     onToggleJson: () => void;
     jsonOpen: boolean;
     activeExample: ExampleId;
     onSelectExample: (id: ExampleId) => void;
     onOpenSearch: () => void;
+    onOpenInputs: () => void;
 }) {
     const { pipeline, setPipelineName } = useStore();
     const [editing, setEditing] = useState(false);
@@ -199,6 +202,14 @@ function PipelineHeader({
             >
                 <span>⌕</span>
                 <kbd className="font-mono text-[10px] text-zinc-600">Ctrl K</kbd>
+            </button>
+
+            <button
+                onClick={onOpenInputs}
+                title="Open Render Graph Input Editor"
+                className="text-[11px] px-2.5 py-1 rounded border font-mono transition-colors bg-zinc-800/60 border-zinc-700/60 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600"
+            >
+                Inputs
             </button>
 
             <ApiKeyButton />
@@ -449,6 +460,7 @@ export function AppShell() {
     const [showValidation, setShowValidation] = useState(false);
     const [showStats, setShowStats] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
+    const [showInputEditor, setShowInputEditor] = useState(false);
     const [rightCollapsed, setRightCollapsed] = useState(false);
     const [activeExample, setActiveExample] = useState<ExampleId>("rg");
 
@@ -487,6 +499,7 @@ export function AppShell() {
                 activeExample={activeExample}
                 onSelectExample={handleSelectExample}
                 onOpenSearch={() => setShowSearch(true)}
+                onOpenInputs={() => setShowInputEditor(true)}
             />
 
             {/* Main area: timeline (left) + right panel */}
@@ -534,6 +547,9 @@ export function AppShell() {
 
             {/* Stats modal */}
             {showStats && <StatsModal onClose={() => setShowStats(false)} />}
+
+            {/* Input editor */}
+            {showInputEditor && <InputEditorPanel onClose={() => setShowInputEditor(false)} />}
 
             {/* JSON drawer (overlay) */}
             <JsonDrawer open={showJson} onClose={() => setShowJson(false)} />

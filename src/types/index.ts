@@ -418,4 +418,50 @@ export interface ValidationIssue {
     location?: string;
 }
 
+// ─── Input Definitions (Render Graph Input Editor) ───────────────────────────
+
+export type InputId = string;
+
+export type InputKind =
+    | "bool"
+    | "int"
+    | "float"
+    | "enum"
+    | "color"
+    | "vec2"
+    | "vec3"
+    | "vec4"
+    | "texture"
+    | "buffer";
+
+export type InputCondition =
+    | {
+          type: "comparison";
+          leftInput: InputId;
+          operator: "==" | "!=" | ">" | ">=" | "<" | "<=";
+          rightValue: boolean | number | string;
+      }
+    | { type: "and"; conditions: InputCondition[] }
+    | { type: "or"; conditions: InputCondition[] }
+    | { type: "not"; condition: InputCondition };
+
+export interface InputDefinition {
+    id: InputId;
+    label: string;
+    description?: string;
+    kind: InputKind;
+    defaultValue: unknown;
+    categoryPath: string[];
+    section?: string;
+    order?: number;
+    enumOptions?: { value: string; label: string }[];
+    visibilityCondition?: InputCondition;
+    enabledCondition?: InputCondition;
+    advanced?: boolean;
+    userFacing?: boolean;
+    min?: number;
+    max?: number;
+    step?: number;
+}
+
 // ─── UI State ─────────────────────────────────────────────────────────────────
