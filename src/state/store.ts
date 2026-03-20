@@ -13,6 +13,7 @@ import type {
     StepType,
     RasterStep,
     IfBlockStep,
+    EnableIfStep,
     RasterCommand,
     RasterCommandType,
     CommandId,
@@ -45,6 +46,10 @@ function collectAllStepIds(stepId: StepId, steps: Record<StepId, Step>): StepId[
             ...ib.thenSteps.flatMap((sid) => collectAllStepIds(sid, steps)),
             ...ib.elseSteps.flatMap((sid) => collectAllStepIds(sid, steps)),
         ];
+    }
+    if (step.type === "enableIf") {
+        const ei = step as EnableIfStep;
+        return [stepId, ...ei.thenSteps.flatMap((sid) => collectAllStepIds(sid, steps))];
     }
     return [stepId];
 }
@@ -126,6 +131,8 @@ export function makeDefaultStep(type: StepType): Step {
             return { ...base, type, target: "", filter: "linear" };
         case "ifBlock":
             return { ...base, type, condition: "", thenSteps: [], elseSteps: [] };
+        case "enableIf":
+            return { ...base, type, condition: "", thenSteps: [] };
     }
 }
 
@@ -228,18 +235,28 @@ export interface AppState {
     addVariant: (passId: PassId) => void;
     deleteVariant: (passId: PassId, variantId: VariantId) => void;
     renameVariant: (passId: PassId, variantId: VariantId, name: string) => void;
+    /** Set the enum InputDefinition that drives variant selection. Pass null to clear. Automatically creates/replaces variants from enumOptions. */
+    setPassVariantEnum: (passId: PassId, inputDefId: string | null) => void;
     addStepToVariant: (passId: PassId, variantId: VariantId, type: StepType) => void;
     deleteStepFromVariant: (passId: PassId, variantId: VariantId, stepId: StepId) => void;
     duplicateStepInVariant: (passId: PassId, variantId: VariantId, stepId: StepId) => void;
     reorderVariantSteps: (passId: PassId, variantId: VariantId, orderedIds: StepId[]) => void;
     moveVariantStepToFallback: (passId: PassId, variantId: VariantId, stepId: StepId, insertAt?: number) => void;
     moveVariantStepFromFallback: (passId: PassId, variantId: VariantId, stepId: StepId, insertAt?: number) => void;
+    moveStepToVariant: (passId: PassId, variantId: VariantId, stepId: StepId, insertAt?: number) => void;
+    moveStepFromVariant: (passId: PassId, variantId: VariantId, stepId: StepId, insertAt?: number) => void;
 
     // ── IfBlock branch actions ────────────────────────────────────────────────
     addStepToIfBranch: (ifBlockId: StepId, branch: "then" | "else", type: StepType) => void;
     deleteStepFromIfBranch: (ifBlockId: StepId, branch: "then" | "else", stepId: StepId) => void;
     reorderIfBranch: (ifBlockId: StepId, branch: "then" | "else", orderedIds: StepId[]) => void;
     updateIfBlockCondition: (ifBlockId: StepId, condition: string) => void;
+    /** Move a step from pass.steps into an ifBlock/enableIf branch. */
+    moveStepToBranch: (passId: PassId, ifBlockId: StepId, branch: "then" | "else", stepId: StepId, insertAt?: number) => void;
+    /** Move a step from an ifBlock/enableIf branch back into pass.steps. */
+    moveStepFromBranch: (passId: PassId, ifBlockId: StepId, branch: "then" | "else", stepId: StepId, insertAt?: number) => void;
+    /** Move a step between two branches (same or different ifBlock/enableIf). */
+    moveStepBetweenBranches: (srcIfBlockId: StepId, srcBranch: "then" | "else", dstIfBlockId: StepId, dstBranch: "then" | "else", stepId: StepId, insertAt?: number) => void;
 
     // ── Raster command actions ────────────────────────────────────────────────
     addRasterCommand: (stepId: StepId, type: RasterCommandType) => void;
@@ -953,6 +970,48 @@ export const useStore = create<AppState>()(
                 };
             }),
 
+        setPassVariantEnum: (passId, inputDefId) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                // Delete all existing variant steps
+                const toDelete = (pass.variants ?? []).flatMap((v) =>
+                    v.activeSteps.flatMap((sid) => collectAllStepIds(sid, s.pipeline.steps)),
+                );
+                const steps = { ...s.pipeline.steps };
+                toDelete.forEach((sid) => delete steps[sid]);
+                if (!inputDefId) {
+                    return {
+                        pipeline: {
+                            ...s.pipeline,
+                            passes: {
+                                ...s.pipeline.passes,
+                                [passId]: { ...pass, variantEnumInputId: undefined, variants: [] },
+                            },
+                            steps,
+                        },
+                    };
+                }
+                const inputDef = s.inputDefinitions.find((d) => d.id === inputDefId);
+                if (!inputDef || inputDef.kind !== "enum") return {};
+                const newVariants: Variant[] = (inputDef.enumOptions ?? []).map((opt) => ({
+                    id: newId(),
+                    name: opt.label,
+                    selector: opt.value,
+                    activeSteps: [],
+                }));
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: { ...pass, variantEnumInputId: inputDefId, variants: newVariants },
+                        },
+                        steps,
+                    },
+                };
+            }),
+
         addStepToVariant: (passId, variantId, type) =>
             set((s) => {
                 const pass = s.pipeline.passes[passId];
@@ -1117,22 +1176,72 @@ export const useStore = create<AppState>()(
                 };
             }),
 
+        moveStepToVariant: (passId, variantId, stepId, insertAt) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const newSteps = pass.steps.filter((sid) => sid !== stepId);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                steps: newSteps,
+                                variants: (pass.variants ?? []).map((v) => {
+                                    if (v.id !== variantId) return v;
+                                    const ids = [...v.activeSteps];
+                                    ids.splice(insertAt ?? ids.length, 0, stepId);
+                                    return { ...v, activeSteps: ids };
+                                }),
+                            },
+                        },
+                    },
+                };
+            }),
+
+        moveStepFromVariant: (passId, variantId, stepId, insertAt) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const newSteps = [...pass.steps];
+                newSteps.splice(insertAt ?? newSteps.length, 0, stepId);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                steps: newSteps,
+                                variants: (pass.variants ?? []).map((v) =>
+                                    v.id === variantId
+                                        ? { ...v, activeSteps: v.activeSteps.filter((sid) => sid !== stepId) }
+                                        : v,
+                                ),
+                            },
+                        },
+                    },
+                };
+            }),
+
         // ── IfBlock branches ──────────────────────────────────────────────────
 
         addStepToIfBranch: (ifBlockId, branch, type) =>
             set((s) => {
                 const ifStep = s.pipeline.steps[ifBlockId];
-                if (!ifStep || ifStep.type !== "ifBlock") return {};
-                const ib = ifStep as IfBlockStep;
+                if (!ifStep || (ifStep.type !== "ifBlock" && ifStep.type !== "enableIf")) return {};
                 const step = makeDefaultStep(type);
                 const key = branch === "then" ? "thenSteps" : "elseSteps";
+                const current = ((ifStep as unknown as Record<string, unknown>)[key] as StepId[]) ?? [];
                 return {
                     pipeline: {
                         ...s.pipeline,
                         steps: {
                             ...s.pipeline.steps,
                             [step.id]: step,
-                            [ifBlockId]: { ...ib, [key]: [...ib[key], step.id] },
+                            [ifBlockId]: { ...ifStep, [key]: [...current, step.id] },
                         },
                     },
                     selectedStepId: step.id,
@@ -1143,13 +1252,13 @@ export const useStore = create<AppState>()(
         deleteStepFromIfBranch: (ifBlockId, branch, stepId) =>
             set((s) => {
                 const ifStep = s.pipeline.steps[ifBlockId];
-                if (!ifStep || ifStep.type !== "ifBlock") return {};
-                const ib = ifStep as IfBlockStep;
+                if (!ifStep || (ifStep.type !== "ifBlock" && ifStep.type !== "enableIf")) return {};
                 const key = branch === "then" ? "thenSteps" : "elseSteps";
+                const current = ((ifStep as unknown as Record<string, unknown>)[key] as StepId[]) ?? [];
                 const toDelete = collectAllStepIds(stepId, s.pipeline.steps);
                 const steps = { ...s.pipeline.steps };
                 toDelete.forEach((sid) => delete steps[sid]);
-                steps[ifBlockId] = { ...ib, [key]: ib[key].filter((sid) => sid !== stepId) };
+                steps[ifBlockId] = { ...ifStep, [key]: current.filter((sid) => sid !== stepId) };
                 return {
                     pipeline: { ...s.pipeline, steps },
                     selectedStepId: toDelete.includes(s.selectedStepId ?? "") ? null : s.selectedStepId,
@@ -1160,7 +1269,7 @@ export const useStore = create<AppState>()(
         reorderIfBranch: (ifBlockId, branch, orderedIds) =>
             set((s) => {
                 const ifStep = s.pipeline.steps[ifBlockId];
-                if (!ifStep || ifStep.type !== "ifBlock") return {};
+                if (!ifStep || (ifStep.type !== "ifBlock" && ifStep.type !== "enableIf")) return {};
                 const key = branch === "then" ? "thenSteps" : "elseSteps";
                 return {
                     pipeline: {
@@ -1173,13 +1282,75 @@ export const useStore = create<AppState>()(
         updateIfBlockCondition: (ifBlockId, condition) =>
             set((s) => {
                 const ifStep = s.pipeline.steps[ifBlockId];
-                if (!ifStep || ifStep.type !== "ifBlock") return {};
+                if (!ifStep || (ifStep.type !== "ifBlock" && ifStep.type !== "enableIf")) return {};
                 return {
                     pipeline: {
                         ...s.pipeline,
                         steps: { ...s.pipeline.steps, [ifBlockId]: { ...ifStep, condition } },
                     },
                 };
+            }),
+
+        moveStepToBranch: (passId, ifBlockId, branch, stepId, insertAt) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                const ifStep = s.pipeline.steps[ifBlockId];
+                if (!pass || !ifStep || (ifStep.type !== "ifBlock" && ifStep.type !== "enableIf")) return {};
+                const newPassSteps = pass.steps.filter((sid) => sid !== stepId);
+                const key = branch === "then" ? "thenSteps" : "elseSteps";
+                const current = ((ifStep as unknown as Record<string, unknown>)[key] as StepId[]) ?? [];
+                const idx = insertAt ?? current.length;
+                const newBranch = [...current.slice(0, idx), stepId, ...current.slice(idx)];
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: { ...s.pipeline.passes, [passId]: { ...pass, steps: newPassSteps } },
+                        steps: { ...s.pipeline.steps, [ifBlockId]: { ...ifStep, [key]: newBranch } },
+                    },
+                };
+            }),
+
+        moveStepFromBranch: (passId, ifBlockId, branch, stepId, insertAt) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                const ifStep = s.pipeline.steps[ifBlockId];
+                if (!pass || !ifStep || (ifStep.type !== "ifBlock" && ifStep.type !== "enableIf")) return {};
+                const key = branch === "then" ? "thenSteps" : "elseSteps";
+                const current = ((ifStep as unknown as Record<string, unknown>)[key] as StepId[]) ?? [];
+                const newBranch = current.filter((sid) => sid !== stepId);
+                const idx = insertAt ?? pass.steps.length;
+                const newPassSteps = [...pass.steps.slice(0, idx), stepId, ...pass.steps.slice(idx)];
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: { ...s.pipeline.passes, [passId]: { ...pass, steps: newPassSteps } },
+                        steps: { ...s.pipeline.steps, [ifBlockId]: { ...ifStep, [key]: newBranch } },
+                    },
+                };
+            }),
+
+        moveStepBetweenBranches: (srcIfBlockId, srcBranch, dstIfBlockId, dstBranch, stepId, insertAt) =>
+            set((s) => {
+                const srcStep = s.pipeline.steps[srcIfBlockId];
+                const dstStep = s.pipeline.steps[dstIfBlockId];
+                if (!srcStep || !dstStep) return {};
+                const srcKey = srcBranch === "then" ? "thenSteps" : "elseSteps";
+                const dstKey = dstBranch === "then" ? "thenSteps" : "elseSteps";
+                const srcCurrent = ((srcStep as unknown as Record<string, unknown>)[srcKey] as StepId[]) ?? [];
+                const newSrc = srcCurrent.filter((sid) => sid !== stepId);
+                // For same-block cross-branch, dstCurrent is the original (item not yet removed)
+                const rawDst = ((dstStep as unknown as Record<string, unknown>)[dstKey] as StepId[]) ?? [];
+                const dstBase = srcIfBlockId === dstIfBlockId && srcKey === dstKey ? newSrc : rawDst;
+                const idx = insertAt ?? dstBase.length;
+                const newDst = [...dstBase.slice(0, idx), stepId, ...dstBase.slice(idx)];
+                const steps = { ...s.pipeline.steps };
+                if (srcIfBlockId === dstIfBlockId) {
+                    steps[srcIfBlockId] = { ...srcStep, [srcKey]: newSrc, [dstKey]: newDst };
+                } else {
+                    steps[srcIfBlockId] = { ...srcStep, [srcKey]: newSrc };
+                    steps[dstIfBlockId] = { ...dstStep, [dstKey]: newDst };
+                }
+                return { pipeline: { ...s.pipeline, steps } };
             }),
 
         // ── Raster commands ───────────────────────────────────────────────────

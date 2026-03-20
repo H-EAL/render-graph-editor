@@ -557,9 +557,15 @@ export function ResourceDrawer() {
                             ))}
                             {usage.readers.map((r, i) => (
                                 <div key={i} className="flex items-center gap-2 text-[10px]">
-                                    <span className="text-sky-400 font-mono font-bold w-3 shrink-0">
-                                        R
-                                    </span>
+                                    {bs ? (
+                                        <span className="text-emerald-400 font-mono font-bold shrink-0 text-[9px] leading-none">
+                                            uses
+                                        </span>
+                                    ) : (
+                                        <span className="text-sky-400 font-mono font-bold w-3 shrink-0">
+                                            R
+                                        </span>
+                                    )}
                                     <button
                                         className="text-zinc-300 hover:text-white hover:underline text-left flex-1 truncate"
                                         onClick={() => selectPass(r.passId)}

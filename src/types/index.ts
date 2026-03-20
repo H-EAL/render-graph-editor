@@ -192,6 +192,7 @@ export interface Pass {
     steps: StepId[];
     disabledSteps?: StepId[];
     variants?: Variant[];
+    variantEnumInputId?: string;
 }
 
 // ─── Raster Commands ──────────────────────────────────────────────────────────
@@ -254,7 +255,8 @@ export type StepType =
     | "clearImages"
     | "fillBuffer"
     | "generateMipChain"
-    | "ifBlock";
+    | "ifBlock"
+    | "enableIf";
 
 export interface StepBase {
     id: StepId;
@@ -376,6 +378,14 @@ export interface IfBlockStep extends StepBase {
     elseSteps: StepId[];
 }
 
+/** Like ifBlock but without an else branch. Semantically a guard — the whole block
+ *  is skipped when the condition is false, rather than an alternative path being taken. */
+export interface EnableIfStep extends StepBase {
+    type: "enableIf";
+    condition: string;
+    thenSteps: StepId[];
+}
+
 export type Step =
     | RasterStep
     | DispatchComputeStep
@@ -387,7 +397,8 @@ export type Step =
     | ClearImagesStep
     | FillBufferStep
     | GenerateMipChainStep
-    | IfBlockStep;
+    | IfBlockStep
+    | EnableIfStep;
 
 // ─── Pipeline ─────────────────────────────────────────────────────────────────
 

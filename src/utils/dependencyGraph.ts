@@ -1,4 +1,4 @@
-import type { Pipeline, PassId, ResourceId, TimelineId, Step } from "../types";
+import type { Pipeline, PassId, ResourceId, TimelineId, Step, RasterStep, IfBlockStep, EnableIfStep } from "../types";
 import { inferPassResources } from "./inferStepResources";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -184,6 +184,33 @@ export interface ResourceUsage {
     }>;
 }
 
+/** Collect all blend-state ResourceIds referenced by a step (recursing into ifBlock/enableIf). */
+function collectBlendStateIds(stepId: string, steps: Record<string, Step>): string[] {
+    const step = steps[stepId];
+    if (!step) return [];
+    const ids: string[] = [];
+    if (step.type === "raster") {
+        const rs = step as RasterStep;
+        for (const att of rs.attachments.colorAttachments) {
+            if (att.blendState) ids.push(att.blendState);
+        }
+        for (const cmd of rs.commands) {
+            if (cmd.type === "drawBatch" && cmd.blendState) ids.push(cmd.blendState);
+        }
+    } else if (step.type === "ifBlock") {
+        const ib = step as IfBlockStep;
+        for (const sid of [...ib.thenSteps, ...ib.elseSteps]) {
+            ids.push(...collectBlendStateIds(sid, steps));
+        }
+    } else if (step.type === "enableIf") {
+        const ei = step as EnableIfStep;
+        for (const sid of ei.thenSteps) {
+            ids.push(...collectBlendStateIds(sid, steps));
+        }
+    }
+    return ids;
+}
+
 export function getResourceUsage(pipeline: Pipeline): Map<ResourceId, ResourceUsage> {
     const { timelines, passes } = pipeline;
 
@@ -209,6 +236,22 @@ export function getResourceUsage(pipeline: Pipeline): Map<ResourceId, ResourceUs
         );
         for (const rid of inferredWrites) getOrCreate(rid).writers.push(passInfo);
         for (const rid of inferredReads) getOrCreate(rid).readers.push(passInfo);
+
+        // Blend states: collect references from commands and color attachments (deduplicated per pass)
+        const allStepIds = [
+            ...pass.steps,
+            ...(pass.disabledSteps ?? []),
+            ...(pass.variants ?? []).flatMap((v) => v.activeSteps),
+        ];
+        const blendIds = new Set<string>();
+        for (const sid of allStepIds) {
+            for (const id of collectBlendStateIds(sid, pipeline.steps as Record<string, Step>)) {
+                blendIds.add(id);
+            }
+        }
+        for (const bsId of blendIds) {
+            getOrCreate(bsId).readers.push(passInfo);
+        }
     }
 
     return result;

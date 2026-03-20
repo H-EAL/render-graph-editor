@@ -17,7 +17,7 @@
  *  generateMipChain – reads  = [target], writes  = [target]
  */
 
-import type { Step, Pass, ResourceId, IfBlockStep, ValueSource } from "../types";
+import type { Step, Pass, ResourceId, IfBlockStep, EnableIfStep, ValueSource } from "../types";
 import type { ShaderDescriptor } from "./shaderApi";
 import { collectValueSourceResourceIds } from "./valueSource";
 
@@ -206,6 +206,20 @@ export function inferStepResources(
             return { reads: [...reads], writes: [...writes] };
         }
 
+        case "enableIf": {
+            const ei = step as EnableIfStep;
+            const reads = new Set<ResourceId>();
+            const writes = new Set<ResourceId>();
+            for (const sid of ei.thenSteps) {
+                const child = stepsMap?.[sid];
+                if (!child) continue;
+                const { reads: r, writes: w } = inferStepResources(child, descriptor, stepsMap);
+                r.forEach((id) => reads.add(id));
+                w.forEach((id) => writes.add(id));
+            }
+            return { reads: [...reads], writes: [...writes] };
+        }
+
         default:
             return { reads: [], writes: [] };
     }
@@ -316,10 +330,20 @@ export function buildResourceOrigins(
                 for (const sid of [...ib.thenSteps, ...ib.elseSteps]) {
                     const child = steps[sid];
                     if (!child) continue;
-                    // Recurse by treating child as a single-step mini-pass
                     const { reads: r, writes: w } = inferStepResources(child, null, steps);
                     r.forEach((rid) => add(rid, `${sn} → ${child.name}  [ifBlock branch]`));
                     w.forEach((rid) => add(rid, `${sn} → ${child.name}  [ifBlock branch]`));
+                }
+                break;
+            }
+            case "enableIf": {
+                const ei = step as EnableIfStep;
+                for (const sid of ei.thenSteps) {
+                    const child = steps[sid];
+                    if (!child) continue;
+                    const { reads: r, writes: w } = inferStepResources(child, null, steps);
+                    r.forEach((rid) => add(rid, `${sn} → ${child.name}  [enableIf]`));
+                    w.forEach((rid) => add(rid, `${sn} → ${child.name}  [enableIf]`));
                 }
                 break;
             }

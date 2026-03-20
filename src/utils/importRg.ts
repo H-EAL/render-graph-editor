@@ -548,6 +548,10 @@ export function importRgJson(raw: unknown): PipelineDocument {
                         const pid = inputParamByName.get(paramName as string);
                         if (pid) aliasBindings[slotName] = pid;
                     }
+                    // Blend state: pick the first valid (non-(-1)) index from blendStateIndices
+                    const bsiArr = (pd?.blendStateIndices ?? []) as number[];
+                    const firstBsi = bsiArr.find((i: number) => i >= 0) ?? -1;
+                    const blendStateId = firstBsi >= 0 ? `bs-${firstBsi}` : undefined;
                     commands.push({
                         id: cmdId,
                         type: "drawBatch",
@@ -558,6 +562,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
                         shaderBindings:
                             Object.keys(aliasBindings).length > 0 ? aliasBindings : undefined,
                         withMaterials: node.type === 2 || undefined,
+                        blendState: blendStateId,
                         depthTest: pd?.depthTestEnable ?? true,
                         depthWrite: pd?.depthWriteEnable ?? false,
                         cullMode: VK_CULL_MODE[pd?.cullMode ?? 0] ?? "back",
