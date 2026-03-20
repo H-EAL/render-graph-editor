@@ -17,8 +17,9 @@
  *  generateMipChain – reads  = [target], writes  = [target]
  */
 
-import type { Step, Pass, ResourceId } from "../types";
+import type { Step, Pass, ResourceId, IfBlockStep, ValueSource } from "../types";
 import type { ShaderDescriptor } from "./shaderApi";
+import { collectValueSourceResourceIds } from "./valueSource";
 
 export interface StepResources {
     reads: ResourceId[];
@@ -27,6 +28,21 @@ export interface StepResources {
 
 function unique(ids: (ResourceId | undefined)[]): ResourceId[] {
     return [...new Set(ids.filter((id): id is ResourceId => !!id))];
+}
+
+/**
+ * Resolve the set of resource IDs that a shader binding slot may reference.
+ * If a fieldSelector exists for the slot it overrides (and fans out both
+ * branches of a select); otherwise fall back to the static binding value.
+ */
+function resolveBindingIds(
+    slotName: string,
+    staticRid: ResourceId | undefined,
+    fieldSelectors: Record<string, ValueSource> | undefined,
+): ResourceId[] {
+    const selector = fieldSelectors?.[slotName];
+    if (selector) return collectValueSourceResourceIds(selector);
+    return staticRid ? [staticRid] : [];
 }
 
 /**
@@ -40,6 +56,7 @@ function unique(ids: (ResourceId | undefined)[]): ResourceId[] {
 export function inferStepResources(
     step: Step,
     descriptor?: ShaderDescriptor | null,
+    stepsMap?: Record<string, Step>,
 ): StepResources {
     switch (step.type) {
         case "raster": {
@@ -99,18 +116,27 @@ export function inferStepResources(
             return { reads: [...readSet], writes: unique(writes) };
         }
 
-        case "dispatchCompute": {
+        case "dispatchCompute":
+        case "dispatchComputeDecals": {
             const bindings = step.shaderBindings ?? {};
             const reads: ResourceId[] = [];
             const writes: ResourceId[] = [];
 
-            for (const [slotName, rid] of Object.entries(bindings)) {
-                if (!rid) continue;
+            // Collect all slot names: static bindings + any extra selector-only slots
+            const allSlotNames = new Set([
+                ...Object.keys(bindings),
+                ...Object.keys(step.fieldSelectors ?? {}),
+            ]);
+
+            for (const slotName of allSlotNames) {
+                const ids = resolveBindingIds(slotName, bindings[slotName], step.fieldSelectors);
+                if (ids.length === 0) continue;
                 const slot = descriptor?.renderTargetSlots.find((s) => s.name === slotName);
-                // Prefer: descriptor slot > stored binding access > infer from name
                 const access = slot?.access ?? step.shaderBindingAccess?.[slotName] ?? "read";
-                if (access === "read" || access === "read_write") reads.push(rid);
-                if (access === "write" || access === "read_write") writes.push(rid);
+                for (const id of ids) {
+                    if (access === "read" || access === "read_write") reads.push(id);
+                    if (access === "write" || access === "read_write") writes.push(id);
+                }
             }
 
             return { reads: unique(reads), writes: unique(writes) };
@@ -121,12 +147,20 @@ export function inferStepResources(
             const reads: ResourceId[] = [];
             const writes: ResourceId[] = [];
 
-            for (const [slotName, rid] of Object.entries(bindings)) {
-                if (!rid) continue;
+            const allSlotNames = new Set([
+                ...Object.keys(bindings),
+                ...Object.keys(step.fieldSelectors ?? {}),
+            ]);
+
+            for (const slotName of allSlotNames) {
+                const ids = resolveBindingIds(slotName, bindings[slotName], step.fieldSelectors);
+                if (ids.length === 0) continue;
                 const slot = descriptor?.renderTargetSlots.find((s) => s.name === slotName);
                 const access = slot?.access ?? step.shaderBindingAccess?.[slotName] ?? "read";
-                if (access === "read" || access === "read_write") reads.push(rid);
-                if (access === "write" || access === "read_write") writes.push(rid);
+                for (const id of ids) {
+                    if (access === "read" || access === "read_write") reads.push(id);
+                    if (access === "write" || access === "read_write") writes.push(id);
+                }
             }
 
             return { reads: unique(reads), writes: unique(writes) };
@@ -157,6 +191,21 @@ export function inferStepResources(
             return { reads: unique([id]), writes: unique([id]) };
         }
 
+        case "ifBlock": {
+            // Union resources from both branches (we can't know which branch runs)
+            const ib = step as IfBlockStep;
+            const reads = new Set<ResourceId>();
+            const writes = new Set<ResourceId>();
+            for (const sid of [...ib.thenSteps, ...ib.elseSteps]) {
+                const child = stepsMap?.[sid];
+                if (!child) continue;
+                const { reads: r, writes: w } = inferStepResources(child, descriptor, stepsMap);
+                r.forEach((id) => reads.add(id));
+                w.forEach((id) => writes.add(id));
+            }
+            return { reads: [...reads], writes: [...writes] };
+        }
+
         default:
             return { reads: [], writes: [] };
     }
@@ -182,7 +231,13 @@ export function buildResourceOrigins(
         origins.get(rid)!.push(label);
     }
 
-    for (const stepId of pass.steps) {
+    const allTopLevel = [
+        ...pass.steps,
+        ...(pass.disabledSteps ?? []),
+        ...(pass.variants ?? []).flatMap((v) => v.activeSteps),
+    ];
+
+    for (const stepId of allTopLevel) {
         const step = steps[stepId];
         if (!step) continue;
         const sn = step.name;
@@ -229,9 +284,16 @@ export function buildResourceOrigins(
                 break;
             }
             case "dispatchCompute":
+            case "dispatchComputeDecals":
             case "dispatchRayTracing": {
-                for (const [slot, rid] of Object.entries(step.shaderBindings ?? {}))
-                    add(rid, `${sn}  [shaderBinding: ${slot}]`);
+                const allSlotNames = new Set([
+                    ...Object.keys(step.shaderBindings ?? {}),
+                    ...Object.keys(step.fieldSelectors ?? {}),
+                ]);
+                for (const slot of allSlotNames) {
+                    const ids = resolveBindingIds(slot, step.shaderBindings?.[slot], step.fieldSelectors);
+                    for (const rid of ids) add(rid, `${sn}  [shaderBinding: ${slot}]`);
+                }
                 break;
             }
             case "copyImage":
@@ -249,6 +311,18 @@ export function buildResourceOrigins(
             case "generateMipChain":
                 add(step.target, `${sn}  [mipTarget]`);
                 break;
+            case "ifBlock": {
+                const ib = step as IfBlockStep;
+                for (const sid of [...ib.thenSteps, ...ib.elseSteps]) {
+                    const child = steps[sid];
+                    if (!child) continue;
+                    // Recurse by treating child as a single-step mini-pass
+                    const { reads: r, writes: w } = inferStepResources(child, null, steps);
+                    r.forEach((rid) => add(rid, `${sn} → ${child.name}  [ifBlock branch]`));
+                    w.forEach((rid) => add(rid, `${sn} → ${child.name}  [ifBlock branch]`));
+                }
+                break;
+            }
         }
     }
 
@@ -256,16 +330,23 @@ export function buildResourceOrigins(
 }
 
 /**
- * Returns the union of resources inferred across all steps that belong to a pass.
+ * Returns the union of resources inferred across all steps that belong to a pass
+ * (base active steps, fallback steps, and all variant active steps).
  */
 export function inferPassResources(pass: Pass, steps: Record<string, Step>): StepResources {
     const reads = new Set<ResourceId>();
     const writes = new Set<ResourceId>();
 
-    for (const stepId of pass.steps) {
+    const allTopLevel = [
+        ...pass.steps,
+        ...(pass.disabledSteps ?? []),
+        ...(pass.variants ?? []).flatMap((v) => v.activeSteps),
+    ];
+
+    for (const stepId of allTopLevel) {
         const step = steps[stepId];
         if (!step) continue;
-        const { reads: r, writes: w } = inferStepResources(step);
+        const { reads: r, writes: w } = inferStepResources(step, null, steps);
         r.forEach((id) => reads.add(id));
         w.forEach((id) => writes.add(id));
     }

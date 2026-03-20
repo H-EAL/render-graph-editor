@@ -22,7 +22,7 @@ import {
     getResourceUsage,
     type DependencyEdge,
 } from "../../utils/dependencyGraph";
-import { derivePassAccess } from "../../utils/resourceOverlay";
+import { derivePassAccess, type AccessKind } from "../../utils/resourceOverlay";
 import { inferPassResources } from "../../utils/inferStepResources";
 import { newId } from "../../utils/id";
 import { fmtRTSize } from "../resources/ResourceDrawer";
@@ -680,24 +680,22 @@ export function PipelineTimelineView() {
         [resources],
     );
 
-    // Overlay rows: ordered by resourceOrder, filtered to existing IDs, plus selected if it's an inputParam
+    // Overlay rows: ordered by resourceOrder, filtered to existing IDs
     const validResIds = useMemo(
         () =>
             new Set([
                 ...resources.renderTargets.map((r) => r.id),
                 ...resources.buffers.map((b) => b.id),
+                ...resources.inputParameters.map((p) => p.id),
             ]),
-        [resources.renderTargets, resources.buffers],
+        [resources.renderTargets, resources.buffers, resources.inputParameters],
     );
 
     const overlayRows = useMemo(() => {
-        const rows = resourceOrder.filter(
+        return resourceOrder.filter(
             (id) => validResIds.has(id) && (showHidden || !hiddenSet.has(id)),
         );
-        if (selectedResourceId && !validResIds.has(selectedResourceId))
-            rows.push(selectedResourceId);
-        return rows;
-    }, [resourceOrder, validResIds, selectedResourceId, showHidden, hiddenSet]);
+    }, [resourceOrder, validResIds, showHidden, hiddenSet]);
 
     const layout = useLayout(pipeline, allEdges, overlayRows.length);
 
@@ -734,10 +732,29 @@ export function PipelineTimelineView() {
     }, [selectedResourceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Access map keyed by rid (unordered)
-    const allAccessMaps = useMemo(
-        () => new Map(overlayRows.map((rid) => [rid, derivePassAccess(rid, pipeline)])),
-        [overlayRows, pipeline],
-    );
+    const allAccessMaps = useMemo(() => {
+        const paramIds = new Set(resources.inputParameters.map((p) => p.id));
+        const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
+        return new Map(
+            overlayRows.map((rid) => {
+                if (paramIds.has(rid)) {
+                    // Input parameters are "read" by any pass whose conditions reference the param name
+                    const map = new Map<PassId, AccessKind>();
+                    for (const pass of Object.values(pipeline.passes)) {
+                        for (const cond of pass.conditions) {
+                            const name = cond.startsWith("!") ? cond.slice(1) : cond;
+                            if (paramByName.get(name) === rid) {
+                                map.set(pass.id, "read");
+                                break;
+                            }
+                        }
+                    }
+                    return [rid, map] as const;
+                }
+                return [rid, derivePassAccess(rid, pipeline)] as const;
+            }),
+        );
+    }, [overlayRows, pipeline, resources.inputParameters]);
 
     // Focused layout: per-timeline linear layout, compressing non-relevant passes into ellipsis nodes
     type EllipsisNode = { count: number; x: number; y: number };
@@ -844,6 +861,20 @@ export function PipelineTimelineView() {
         }
         return dead;
     }, [usageMap, rtMap]);
+    // Input parameters referenced by any pass condition (by name)
+    const usedParamIds = useMemo(() => {
+        const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
+        const used = new Set<ResourceId>();
+        for (const pass of Object.values(pipeline.passes)) {
+            for (const cond of pass.conditions) {
+                const name = cond.startsWith("!") ? cond.slice(1) : cond;
+                const pid = paramByName.get(name);
+                if (pid) used.add(pid);
+            }
+        }
+        return used;
+    }, [resources.inputParameters, pipeline.passes]);
+
     const unusedIds = useMemo(() => {
         const unused = new Set<string>();
         const allIds = [
@@ -852,6 +883,11 @@ export function PipelineTimelineView() {
             ...resources.inputParameters.map((p) => p.id),
         ];
         for (const rid of allIds) {
+            // Input parameters: unused if no pass condition references them
+            if (paramMap.has(rid)) {
+                if (!usedParamIds.has(rid)) unused.add(rid);
+                continue;
+            }
             const u = usageMap.get(rid);
             if (!u || (u.writers.length === 0 && u.readers.length === 0)) {
                 // RTs readable by the CPU (described as gpu_to_cpu / readback) are not unused
@@ -861,7 +897,7 @@ export function PipelineTimelineView() {
             }
         }
         return unused;
-    }, [resources.renderTargets, resources.buffers, resources.inputParameters, usageMap, rtMap]);
+    }, [resources.renderTargets, resources.buffers, resources.inputParameters, usageMap, rtMap, paramMap, usedParamIds]);
 
     // Resources that are read by at least one pass before any same-timeline write.
     // Cross-timeline writers are considered valid prior writes (semaphore-ordered).
@@ -1324,14 +1360,22 @@ export function PipelineTimelineView() {
 
     const crossCount = allEdges.filter((e) => e.isCrossTimeline).length;
 
-    // Resources used by the selected pass (reads + writes)
+    // Resources used by the selected pass (reads + writes + condition-referenced input params)
     const passResourceIds = useMemo(() => {
         if (!selectedPassId) return new Set<ResourceId>();
         const pass = pipeline.passes[selectedPassId];
         if (!pass) return new Set<ResourceId>();
         const { reads, writes } = inferPassResources(pass, pipeline.steps as Record<string, Step>);
-        return new Set<ResourceId>([...reads, ...writes]);
-    }, [selectedPassId, pipeline.passes, pipeline.steps]);
+        const ids = new Set<ResourceId>([...reads, ...writes]);
+        // Include input parameters whose name matches a pass condition
+        const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
+        for (const cond of pass.conditions) {
+            const name = cond.startsWith("!") ? cond.slice(1) : cond;
+            const pid = paramByName.get(name);
+            if (pid) ids.add(pid);
+        }
+        return ids;
+    }, [selectedPassId, pipeline.passes, pipeline.steps, resources.inputParameters]);
 
     // Active resource IDs for row highlighting:
     // In non-overlap mode with a single RT selected, highlight the selected RT + all
@@ -2171,7 +2215,7 @@ export function PipelineTimelineView() {
                                         const rtObj = rtMap.get(rid);
                                         const bufObj = bufMap.get(rid);
                                         const paramObj = paramMap.get(rid);
-                                        const name = resolveIds([rid]);
+                                        const name = paramObj ? paramObj.name : resolveIds([rid]);
                                         const tooltip = rtObj
                                             ? `${rtObj.name}\nType: Render Target\nFormat: ${rtObj.format}\nSize: ${fmtRTSize(rtObj.width)} × ${fmtRTSize(rtObj.height)}\nMips: ${rtObj.mips}`
                                             : bufObj
@@ -2180,10 +2224,13 @@ export function PipelineTimelineView() {
                                                 ? `${paramObj.name}\nType: Input Param (${paramObj.type})\nDefault: ${paramObj.defaultValue}`
                                                 : name;
                                         const isRT = rtNames.has(rid);
-                                        const icon = isRT ? "▣" : "▤";
+                                        const isParam = !!paramObj;
+                                        const icon = isRT ? "▣" : isParam ? "◈" : "▤";
                                         const iconCls = isRT
                                             ? "text-blue-400/80"
-                                            : "text-amber-400/80";
+                                            : isParam
+                                              ? "text-green-400/80"
+                                              : "text-amber-400/80";
                                         const isDead = deadWriteIds.has(rid);
                                         const isUnused = unusedIds.has(rid);
                                         return (

@@ -169,6 +169,7 @@ function DrawBatchEditor({ cmd, stepId }: { cmd: DrawBatchCommand; stepId: StepI
     const rtOpts = [
         ...resources.renderTargets.map((r) => ({ value: r.id, label: r.name })),
         ...resources.buffers.map((b) => ({ value: b.id, label: b.name })),
+        ...resources.inputParameters.map((p) => ({ value: p.id, label: p.name })),
     ];
     const updateBinding = (slotName: string, rid: string) => {
         u({ shaderBindings: { ...(cmd.shaderBindings ?? {}), [slotName]: rid } });

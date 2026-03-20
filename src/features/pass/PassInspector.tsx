@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useStore } from "../../state/store";
 import { StepList } from "../step/StepList";
 import { Input } from "../../components/ui/Input";
@@ -8,7 +8,7 @@ import { FieldRow, InspectorSection } from "../../components/ui/Panel";
 import { TagsInput } from "../../components/ui/TagsInput";
 import { deriveDependencies, getPassDependencies } from "../../utils/dependencyGraph";
 import { inferPassResources, buildResourceOrigins } from "../../utils/inferStepResources";
-import type { Pass, PassId, Step } from "../../types";
+import type { Pass, PassId, Step, VariantId } from "../../types";
 
 // ─── Dependency display ───────────────────────────────────────────────────────
 
@@ -63,8 +63,15 @@ function DependencyRow({
 // ─── Main inspector ───────────────────────────────────────────────────────────
 
 export function PassInspector() {
-    const { pipeline, resources, selectedPassId, updatePass, selectResource } = useStore();
+    const { pipeline, resources, selectedPassId, updatePass, selectResource, addVariant, deleteVariant, renameVariant } = useStore();
     const pass = selectedPassId ? pipeline.passes[selectedPassId] : null;
+    const [editingVariantId, setEditingVariantId] = useState<VariantId | null>(null);
+    // Reset variant tab when pass changes
+    const [lastPassId, setLastPassId] = useState<string | null>(null);
+    if (selectedPassId !== lastPassId) {
+        setLastPassId(selectedPassId);
+        setEditingVariantId(null);
+    }
 
     const allEdges = useMemo(() => deriveDependencies(pipeline), [pipeline]);
     const passDeps = useMemo(
@@ -248,8 +255,84 @@ export function PassInspector() {
                 </div>
             </InspectorSection>
 
+            <InspectorSection title="Variants">
+                {/* Variant tabs: Base + each variant */}
+                <div className="flex flex-wrap gap-1 px-3 py-2 border-b border-zinc-800/50">
+                    <button
+                        className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                            editingVariantId === null
+                                ? "bg-blue-600/80 text-white"
+                                : "bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700"
+                        }`}
+                        onClick={() => setEditingVariantId(null)}
+                    >
+                        Base
+                    </button>
+                    {(pass.variants ?? []).map((v) => (
+                        <div key={v.id} className="flex items-center gap-0.5">
+                            <button
+                                className={`px-2.5 py-1 rounded-l text-xs font-medium transition-colors ${
+                                    editingVariantId === v.id
+                                        ? "bg-violet-600/80 text-white"
+                                        : "bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700"
+                                }`}
+                                onClick={() => setEditingVariantId(v.id)}
+                            >
+                                {v.name}
+                            </button>
+                            <button
+                                className="px-1 py-1 rounded-r bg-zinc-800 text-zinc-600 hover:text-red-400 hover:bg-zinc-700 text-xs"
+                                title={`Delete variant "${v.name}"`}
+                                onClick={() => {
+                                    deleteVariant(pass.id, v.id);
+                                    if (editingVariantId === v.id) setEditingVariantId(null);
+                                }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    ))}
+                    <button
+                        className="px-2.5 py-1 rounded text-xs text-zinc-500 hover:text-zinc-300 bg-zinc-800/60 hover:bg-zinc-700 transition-colors"
+                        onClick={() => {
+                            addVariant(pass.id);
+                            // select the new variant after it's created
+                            setTimeout(() => {
+                                const updated = useStore.getState().pipeline.passes[pass.id];
+                                const last = (updated?.variants ?? []).at(-1);
+                                if (last) setEditingVariantId(last.id);
+                            }, 0);
+                        }}
+                    >
+                        + Add
+                    </button>
+                </div>
+                {/* Variant name editor when a variant is selected */}
+                {editingVariantId !== null && (() => {
+                    const v = (pass.variants ?? []).find((v) => v.id === editingVariantId);
+                    return v ? (
+                        <div className="px-3 py-2 border-b border-zinc-800/50 flex items-center gap-2">
+                            <span className="text-[10px] text-zinc-500 shrink-0">Name</span>
+                            <input
+                                className="flex-1 bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                                value={v.name}
+                                onChange={(e) => renameVariant(pass.id, v.id, e.target.value)}
+                            />
+                            {v.selector !== undefined && (
+                                <span className="text-[10px] font-mono text-violet-400/70 bg-violet-950/30 rounded px-1">{v.selector}</span>
+                            )}
+                        </div>
+                    ) : null;
+                })()}
+                {(pass.variants ?? []).length === 0 && (
+                    <div className="px-3 py-2 text-[10px] text-zinc-600 italic">
+                        No variants — base active steps are always used. Add a variant to express alternative implementations.
+                    </div>
+                )}
+            </InspectorSection>
+
             <InspectorSection title="Steps">
-                <StepList passId={pass.id} />
+                <StepList passId={pass.id} variantId={editingVariantId ?? undefined} />
             </InspectorSection>
 
             <InspectorSection title="Dependencies">

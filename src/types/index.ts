@@ -5,6 +5,7 @@ export type StepId = string;
 export type CommandId = string;
 export type ResourceId = string;
 export type TimelineId = string;
+export type VariantId = string;
 
 // ─── Resource Library ────────────────────────────────────────────────────────
 
@@ -99,6 +100,32 @@ export interface ResourceLibrary {
     inputParameters: InputParameter[];
 }
 
+// ─── Value Sources / Data Selectors ───────────────────────────────────────────
+//
+// A ValueSource<T> describes how a step field gets its value.
+// Instead of always hard-coding a constant, a field can reference a graph input
+// (InputParameter) or pick between two values based on a boolean condition.
+//
+// Use cases:
+//   - applyToBackground = { kind:"input", inputId:"displayBackground" }
+//   - colorIn = { kind:"select", condition:"displayBackground",
+//                 trueValue:{kind:"constant",value:"color_rt"},
+//                 falseValue:{kind:"constant",value:"no_bg_rt"} }
+//   - sharpenStrength = { kind:"select", condition:"debugMode",
+//                         trueValue:{kind:"constant",value:1.0},
+//                         falseValue:{kind:"constant",value:0.25} }
+//
+// When to use selectors vs other branching mechanisms:
+//   - Pass condition   → whether a whole pass runs
+//   - Variant          → which implementation family a pass uses
+//   - IfBlock          → local execution branching inside a step list
+//   - Data selector    → same step, different bound value per condition
+
+export type ValueSource<T = unknown> =
+    | { kind: "constant"; value: T }
+    | { kind: "input"; inputId: string }
+    | { kind: "select"; condition: string; trueValue: ValueSource<T>; falseValue: ValueSource<T> };
+
 // ─── Timeline ─────────────────────────────────────────────────────────────────
 
 export type TimelineType = "graphics" | "asyncCompute" | "transfer" | "raytracing" | "custom";
@@ -144,6 +171,14 @@ export interface RasterAttachments {
     resolveAttachments?: ResolveAttachment[];
 }
 
+export interface Variant {
+    id: VariantId;
+    name: string;
+    /** Optional future-facing selector key (e.g. "SSAO" | "HBAO") */
+    selector?: string;
+    activeSteps: StepId[];
+}
+
 export interface Pass {
     id: PassId;
     name: string;
@@ -155,6 +190,8 @@ export interface Pass {
     writes: ResourceId[];
     manualDeps?: PassId[];
     steps: StepId[];
+    disabledSteps?: StepId[];
+    variants?: Variant[];
 }
 
 // ─── Raster Commands ──────────────────────────────────────────────────────────
@@ -216,7 +253,8 @@ export type StepType =
     | "resolveImage"
     | "clearImages"
     | "fillBuffer"
-    | "generateMipChain";
+    | "generateMipChain"
+    | "ifBlock";
 
 export interface StepBase {
     id: StepId;
@@ -239,6 +277,10 @@ export interface DispatchComputeStep extends StepBase {
     shaderBindings?: Record<string, ResourceId>;
     /** Per-slot access decoded from the encoded binding value ('read' | 'write' | 'read_write') */
     shaderBindingAccess?: Record<string, string>;
+    /** Named shader input slot → constant scalar value (int, float, bool) */
+    shaderConstants?: Record<string, number | boolean>;
+    /** Data selectors: override any shaderBindings/shaderConstants slot with a ValueSource */
+    fieldSelectors?: Record<string, ValueSource>;
     /** Slot that provides the dispatch size reference (its dimensions drive group counts) */
     sizeReferenceSlot?: string;
     groupsX: number | string;
@@ -253,6 +295,10 @@ export interface DispatchComputeDecalsStep extends StepBase {
     shaderBindings?: Record<string, ResourceId>;
     /** Per-slot access decoded from the encoded binding value ('read' | 'write' | 'read_write') */
     shaderBindingAccess?: Record<string, string>;
+    /** Named shader input slot → constant scalar value (int, float, bool) */
+    shaderConstants?: Record<string, number | boolean>;
+    /** Data selectors: override any shaderBindings/shaderConstants slot with a ValueSource */
+    fieldSelectors?: Record<string, ValueSource>;
     /** Slot that provides the dispatch size reference (its dimensions drive group counts) */
     sizeReferenceSlot?: string;
     groupsX: number | string;
@@ -272,6 +318,10 @@ export interface DispatchRayTracingStep extends StepBase {
     shaderBindings?: Record<string, ResourceId>;
     /** Per-slot access decoded from the encoded binding value */
     shaderBindingAccess?: Record<string, string>;
+    /** Named shader input slot → constant scalar value (int, float, bool) */
+    shaderConstants?: Record<string, number | boolean>;
+    /** Data selectors: override any shaderBindings/shaderConstants slot with a ValueSource */
+    fieldSelectors?: Record<string, ValueSource>;
     /** Slot that provides the dispatch size reference */
     sizeReferenceSlot?: string;
     width: number | string;
@@ -319,6 +369,13 @@ export interface GenerateMipChainStep extends StepBase {
     filter: "nearest" | "linear";
 }
 
+export interface IfBlockStep extends StepBase {
+    type: "ifBlock";
+    condition: string;
+    thenSteps: StepId[];
+    elseSteps: StepId[];
+}
+
 export type Step =
     | RasterStep
     | DispatchComputeStep
@@ -329,7 +386,8 @@ export type Step =
     | ResolveImageStep
     | ClearImagesStep
     | FillBufferStep
-    | GenerateMipChainStep;
+    | GenerateMipChainStep
+    | IfBlockStep;
 
 // ─── Pipeline ─────────────────────────────────────────────────────────────────
 

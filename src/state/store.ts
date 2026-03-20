@@ -11,12 +11,15 @@ import type {
     StepId,
     StepType,
     RasterStep,
+    IfBlockStep,
     RasterCommand,
     RasterCommandType,
     CommandId,
     Timeline,
     TimelineId,
     TimelineType,
+    Variant,
+    VariantId,
     ResourceLibrary,
     RenderTarget,
     Buffer,
@@ -25,6 +28,33 @@ import type {
     InputParameter,
     ResourceId,
 } from "../types";
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Recursively collect all step IDs that belong to a step (handles IfBlock nesting). */
+function collectAllStepIds(stepId: StepId, steps: Record<StepId, Step>): StepId[] {
+    const step = steps[stepId];
+    if (!step) return [stepId];
+    if (step.type === "ifBlock") {
+        const ib = step as IfBlockStep;
+        return [
+            stepId,
+            ...ib.thenSteps.flatMap((sid) => collectAllStepIds(sid, steps)),
+            ...ib.elseSteps.flatMap((sid) => collectAllStepIds(sid, steps)),
+        ];
+    }
+    return [stepId];
+}
+
+/** Collect every step ID owned by a pass (all lists + IfBlock nesting). */
+function collectAllPassStepIds(pass: Pass, steps: Record<StepId, Step>): StepId[] {
+    const topLevel = [
+        ...pass.steps,
+        ...(pass.disabledSteps ?? []),
+        ...(pass.variants ?? []).flatMap((v) => v.activeSteps),
+    ];
+    return topLevel.flatMap((sid) => collectAllStepIds(sid, steps));
+}
 
 // ─── Default factories ────────────────────────────────────────────────────────
 
@@ -91,7 +121,13 @@ export function makeDefaultStep(type: StepType): Step {
             return { ...base, type, target: "", value: 0 };
         case "generateMipChain":
             return { ...base, type, target: "", filter: "linear" };
+        case "ifBlock":
+            return { ...base, type, condition: "", thenSteps: [], elseSteps: [] };
     }
+}
+
+function makeDefaultVariant(name: string): Variant {
+    return { id: newId(), name, activeSteps: [] };
 }
 
 function makeDefaultPass(timelineId: TimelineId): Pass {
@@ -105,6 +141,8 @@ function makeDefaultPass(timelineId: TimelineId): Pass {
         writes: [],
         manualDeps: [],
         steps: [],
+        disabledSteps: [],
+        variants: [],
     };
 }
 
@@ -121,7 +159,11 @@ function makeDefaultTimeline(type: TimelineType = "graphics"): Timeline {
 }
 
 function resourceOrderFromLibrary(resources: ResourceLibrary): ResourceId[] {
-    return [...resources.renderTargets.map((r) => r.id), ...resources.buffers.map((b) => b.id)];
+    return [
+        ...resources.renderTargets.map((r) => r.id),
+        ...resources.buffers.map((b) => b.id),
+        ...resources.inputParameters.map((p) => p.id),
+    ];
 }
 
 // ─── Store shape ─────────────────────────────────────────────────────────────
@@ -170,6 +212,30 @@ export interface AppState {
     duplicateStep: (passId: PassId, stepId: StepId) => void;
     reorderSteps: (passId: PassId, orderedIds: StepId[]) => void;
     updateStep: (stepId: StepId, patch: Partial<Step>) => void;
+    // ── Fallback (disabled) step actions ─────────────────────────────────────
+    addFallbackStep: (passId: PassId, type: StepType) => void;
+    deleteFallbackStep: (passId: PassId, stepId: StepId) => void;
+    duplicateFallbackStep: (passId: PassId, stepId: StepId) => void;
+    reorderFallbackSteps: (passId: PassId, orderedIds: StepId[]) => void;
+    moveStepToFallback: (passId: PassId, stepId: StepId, insertAt?: number) => void;
+    moveStepFromFallback: (passId: PassId, stepId: StepId, insertAt?: number) => void;
+
+    // ── Variant actions ───────────────────────────────────────────────────────
+    addVariant: (passId: PassId) => void;
+    deleteVariant: (passId: PassId, variantId: VariantId) => void;
+    renameVariant: (passId: PassId, variantId: VariantId, name: string) => void;
+    addStepToVariant: (passId: PassId, variantId: VariantId, type: StepType) => void;
+    deleteStepFromVariant: (passId: PassId, variantId: VariantId, stepId: StepId) => void;
+    duplicateStepInVariant: (passId: PassId, variantId: VariantId, stepId: StepId) => void;
+    reorderVariantSteps: (passId: PassId, variantId: VariantId, orderedIds: StepId[]) => void;
+    moveVariantStepToFallback: (passId: PassId, variantId: VariantId, stepId: StepId, insertAt?: number) => void;
+    moveVariantStepFromFallback: (passId: PassId, variantId: VariantId, stepId: StepId, insertAt?: number) => void;
+
+    // ── IfBlock branch actions ────────────────────────────────────────────────
+    addStepToIfBranch: (ifBlockId: StepId, branch: "then" | "else", type: StepType) => void;
+    deleteStepFromIfBranch: (ifBlockId: StepId, branch: "then" | "else", stepId: StepId) => void;
+    reorderIfBranch: (ifBlockId: StepId, branch: "then" | "else", orderedIds: StepId[]) => void;
+    updateIfBlockCondition: (ifBlockId: StepId, condition: string) => void;
 
     // ── Raster command actions ────────────────────────────────────────────────
     addRasterCommand: (stepId: StepId, type: RasterCommandType) => void;
@@ -265,7 +331,7 @@ export const useStore = create<AppState>()(
                 const steps = { ...s.pipeline.steps };
                 for (const pid of timeline.passIds) {
                     const pass = passes[pid];
-                    if (pass) pass.steps.forEach((sid) => delete steps[sid]);
+                    if (pass) collectAllPassStepIds(pass, steps).forEach((sid) => delete steps[sid]);
                     delete passes[pid];
                 }
                 const timelines = s.pipeline.timelines.filter((tl) => tl.id !== id);
@@ -332,7 +398,7 @@ export const useStore = create<AppState>()(
                 const passes = { ...s.pipeline.passes };
                 delete passes[id];
                 const steps = { ...s.pipeline.steps };
-                pass.steps.forEach((sid) => delete steps[sid]);
+                collectAllPassStepIds(pass, steps).forEach((sid) => delete steps[sid]);
                 const timelines = s.pipeline.timelines.map((tl) => ({
                     ...tl,
                     passIds: tl.passIds.filter((pid) => pid !== id),
@@ -549,19 +615,28 @@ export const useStore = create<AppState>()(
             set((s) => {
                 const pass = s.pipeline.passes[passId];
                 if (!pass) return {};
-                const passes = {
-                    ...s.pipeline.passes,
-                    [passId]: {
-                        ...pass,
-                        steps: pass.steps.filter((sid) => sid !== stepId),
-                    },
-                };
+                const toDelete = collectAllStepIds(stepId, s.pipeline.steps);
                 const steps = { ...s.pipeline.steps };
-                delete steps[stepId];
+                toDelete.forEach((sid) => delete steps[sid]);
                 return {
-                    pipeline: { ...s.pipeline, passes, steps },
-                    selectedStepId: s.selectedStepId === stepId ? null : s.selectedStepId,
-                    selectedCommandId: s.selectedStepId === stepId ? null : s.selectedCommandId,
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                steps: pass.steps.filter((sid) => sid !== stepId),
+                                disabledSteps: (pass.disabledSteps ?? []).filter((sid) => sid !== stepId),
+                                variants: (pass.variants ?? []).map((v) => ({
+                                    ...v,
+                                    activeSteps: v.activeSteps.filter((sid) => sid !== stepId),
+                                })),
+                            },
+                        },
+                        steps,
+                    },
+                    selectedStepId: toDelete.includes(s.selectedStepId ?? "") ? null : s.selectedStepId,
+                    selectedCommandId: toDelete.includes(s.selectedStepId ?? "") ? null : s.selectedCommandId,
                 };
             }),
 
@@ -615,6 +690,140 @@ export const useStore = create<AppState>()(
                 };
             }),
 
+        addFallbackStep: (passId, type) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const step = makeDefaultStep(type);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                disabledSteps: [...(pass.disabledSteps ?? []), step.id],
+                            },
+                        },
+                        steps: { ...s.pipeline.steps, [step.id]: step },
+                    },
+                    selectedStepId: step.id,
+                    selectedCommandId: null,
+                };
+            }),
+
+        deleteFallbackStep: (passId, stepId) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const toDelete = collectAllStepIds(stepId, s.pipeline.steps);
+                const steps = { ...s.pipeline.steps };
+                toDelete.forEach((sid) => delete steps[sid]);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                disabledSteps: (pass.disabledSteps ?? []).filter(
+                                    (sid) => sid !== stepId,
+                                ),
+                            },
+                        },
+                        steps,
+                    },
+                    selectedStepId: s.selectedStepId === stepId ? null : s.selectedStepId,
+                    selectedCommandId: s.selectedStepId === stepId ? null : s.selectedCommandId,
+                };
+            }),
+
+        duplicateFallbackStep: (passId, stepId) =>
+            set((s) => {
+                const src = s.pipeline.steps[stepId];
+                const pass = s.pipeline.passes[passId];
+                if (!src || !pass) return {};
+                const newStep: Step =
+                    src.type === "raster"
+                        ? {
+                              ...(src as RasterStep),
+                              id: newId(),
+                              name: src.name + " (copy)",
+                              commands: (src as RasterStep).commands.map((cmd) => ({
+                                  ...cmd,
+                                  id: newId(),
+                              })),
+                          }
+                        : { ...src, id: newId(), name: src.name + " (copy)" };
+                const disabled = pass.disabledSteps ?? [];
+                const idx = disabled.indexOf(stepId);
+                const newDisabled = [...disabled];
+                newDisabled.splice(idx + 1, 0, newStep.id);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: { ...pass, disabledSteps: newDisabled },
+                        },
+                        steps: { ...s.pipeline.steps, [newStep.id]: newStep },
+                    },
+                    selectedStepId: newStep.id,
+                    selectedCommandId: null,
+                };
+            }),
+
+        reorderFallbackSteps: (passId, orderedIds) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: { ...pass, disabledSteps: orderedIds },
+                        },
+                    },
+                };
+            }),
+
+        moveStepToFallback: (passId, stepId, insertAt) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const newSteps = pass.steps.filter((sid) => sid !== stepId);
+                const newDisabled = [...(pass.disabledSteps ?? [])];
+                newDisabled.splice(insertAt ?? newDisabled.length, 0, stepId);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: { ...pass, steps: newSteps, disabledSteps: newDisabled },
+                        },
+                    },
+                };
+            }),
+
+        moveStepFromFallback: (passId, stepId, insertAt) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const newDisabled = (pass.disabledSteps ?? []).filter((sid) => sid !== stepId);
+                const newSteps = [...pass.steps];
+                newSteps.splice(insertAt ?? newSteps.length, 0, stepId);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: { ...pass, steps: newSteps, disabledSteps: newDisabled },
+                        },
+                    },
+                };
+            }),
+
         updateStep: (stepId, patch) =>
             set((s) => ({
                 pipeline: {
@@ -625,6 +834,299 @@ export const useStore = create<AppState>()(
                     },
                 },
             })),
+
+        // ── Variants ─────────────────────────────────────────────────────────
+
+        addVariant: (passId) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const variant = makeDefaultVariant(`Variant ${(pass.variants ?? []).length + 1}`);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: { ...pass, variants: [...(pass.variants ?? []), variant] },
+                        },
+                    },
+                };
+            }),
+
+        deleteVariant: (passId, variantId) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const variant = (pass.variants ?? []).find((v) => v.id === variantId);
+                if (!variant) return {};
+                const toDelete = variant.activeSteps.flatMap((sid) =>
+                    collectAllStepIds(sid, s.pipeline.steps),
+                );
+                const steps = { ...s.pipeline.steps };
+                toDelete.forEach((sid) => delete steps[sid]);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                variants: (pass.variants ?? []).filter((v) => v.id !== variantId),
+                            },
+                        },
+                        steps,
+                    },
+                };
+            }),
+
+        renameVariant: (passId, variantId, name) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                variants: (pass.variants ?? []).map((v) =>
+                                    v.id === variantId ? { ...v, name } : v,
+                                ),
+                            },
+                        },
+                    },
+                };
+            }),
+
+        addStepToVariant: (passId, variantId, type) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const step = makeDefaultStep(type);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                variants: (pass.variants ?? []).map((v) =>
+                                    v.id === variantId
+                                        ? { ...v, activeSteps: [...v.activeSteps, step.id] }
+                                        : v,
+                                ),
+                            },
+                        },
+                        steps: { ...s.pipeline.steps, [step.id]: step },
+                    },
+                    selectedStepId: step.id,
+                    selectedCommandId: null,
+                };
+            }),
+
+        deleteStepFromVariant: (passId, variantId, stepId) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const toDelete = collectAllStepIds(stepId, s.pipeline.steps);
+                const steps = { ...s.pipeline.steps };
+                toDelete.forEach((sid) => delete steps[sid]);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                variants: (pass.variants ?? []).map((v) =>
+                                    v.id === variantId
+                                        ? { ...v, activeSteps: v.activeSteps.filter((sid) => sid !== stepId) }
+                                        : v,
+                                ),
+                            },
+                        },
+                        steps,
+                    },
+                    selectedStepId: toDelete.includes(s.selectedStepId ?? "") ? null : s.selectedStepId,
+                    selectedCommandId: toDelete.includes(s.selectedStepId ?? "") ? null : s.selectedCommandId,
+                };
+            }),
+
+        duplicateStepInVariant: (passId, variantId, stepId) =>
+            set((s) => {
+                const src = s.pipeline.steps[stepId];
+                const pass = s.pipeline.passes[passId];
+                if (!src || !pass) return {};
+                const newStep: Step =
+                    src.type === "raster"
+                        ? {
+                              ...(src as import("../types").RasterStep),
+                              id: newId(),
+                              name: src.name + " (copy)",
+                              commands: (src as import("../types").RasterStep).commands.map((cmd) => ({
+                                  ...cmd,
+                                  id: newId(),
+                              })),
+                          }
+                        : { ...src, id: newId(), name: src.name + " (copy)" };
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                variants: (pass.variants ?? []).map((v) => {
+                                    if (v.id !== variantId) return v;
+                                    const idx = v.activeSteps.indexOf(stepId);
+                                    const ids = [...v.activeSteps];
+                                    ids.splice(idx + 1, 0, newStep.id);
+                                    return { ...v, activeSteps: ids };
+                                }),
+                            },
+                        },
+                        steps: { ...s.pipeline.steps, [newStep.id]: newStep },
+                    },
+                    selectedStepId: newStep.id,
+                    selectedCommandId: null,
+                };
+            }),
+
+        reorderVariantSteps: (passId, variantId, orderedIds) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                variants: (pass.variants ?? []).map((v) =>
+                                    v.id === variantId ? { ...v, activeSteps: orderedIds } : v,
+                                ),
+                            },
+                        },
+                    },
+                };
+            }),
+
+        moveVariantStepToFallback: (passId, variantId, stepId, insertAt) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const newDisabled = [...(pass.disabledSteps ?? [])];
+                newDisabled.splice(insertAt ?? newDisabled.length, 0, stepId);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                disabledSteps: newDisabled,
+                                variants: (pass.variants ?? []).map((v) =>
+                                    v.id === variantId
+                                        ? { ...v, activeSteps: v.activeSteps.filter((sid) => sid !== stepId) }
+                                        : v,
+                                ),
+                            },
+                        },
+                    },
+                };
+            }),
+
+        moveVariantStepFromFallback: (passId, variantId, stepId, insertAt) =>
+            set((s) => {
+                const pass = s.pipeline.passes[passId];
+                if (!pass) return {};
+                const newDisabled = (pass.disabledSteps ?? []).filter((sid) => sid !== stepId);
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        passes: {
+                            ...s.pipeline.passes,
+                            [passId]: {
+                                ...pass,
+                                disabledSteps: newDisabled,
+                                variants: (pass.variants ?? []).map((v) => {
+                                    if (v.id !== variantId) return v;
+                                    const ids = [...v.activeSteps];
+                                    ids.splice(insertAt ?? ids.length, 0, stepId);
+                                    return { ...v, activeSteps: ids };
+                                }),
+                            },
+                        },
+                    },
+                };
+            }),
+
+        // ── IfBlock branches ──────────────────────────────────────────────────
+
+        addStepToIfBranch: (ifBlockId, branch, type) =>
+            set((s) => {
+                const ifStep = s.pipeline.steps[ifBlockId];
+                if (!ifStep || ifStep.type !== "ifBlock") return {};
+                const ib = ifStep as IfBlockStep;
+                const step = makeDefaultStep(type);
+                const key = branch === "then" ? "thenSteps" : "elseSteps";
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        steps: {
+                            ...s.pipeline.steps,
+                            [step.id]: step,
+                            [ifBlockId]: { ...ib, [key]: [...ib[key], step.id] },
+                        },
+                    },
+                    selectedStepId: step.id,
+                    selectedCommandId: null,
+                };
+            }),
+
+        deleteStepFromIfBranch: (ifBlockId, branch, stepId) =>
+            set((s) => {
+                const ifStep = s.pipeline.steps[ifBlockId];
+                if (!ifStep || ifStep.type !== "ifBlock") return {};
+                const ib = ifStep as IfBlockStep;
+                const key = branch === "then" ? "thenSteps" : "elseSteps";
+                const toDelete = collectAllStepIds(stepId, s.pipeline.steps);
+                const steps = { ...s.pipeline.steps };
+                toDelete.forEach((sid) => delete steps[sid]);
+                steps[ifBlockId] = { ...ib, [key]: ib[key].filter((sid) => sid !== stepId) };
+                return {
+                    pipeline: { ...s.pipeline, steps },
+                    selectedStepId: toDelete.includes(s.selectedStepId ?? "") ? null : s.selectedStepId,
+                    selectedCommandId: toDelete.includes(s.selectedStepId ?? "") ? null : s.selectedCommandId,
+                };
+            }),
+
+        reorderIfBranch: (ifBlockId, branch, orderedIds) =>
+            set((s) => {
+                const ifStep = s.pipeline.steps[ifBlockId];
+                if (!ifStep || ifStep.type !== "ifBlock") return {};
+                const key = branch === "then" ? "thenSteps" : "elseSteps";
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        steps: { ...s.pipeline.steps, [ifBlockId]: { ...ifStep, [key]: orderedIds } },
+                    },
+                };
+            }),
+
+        updateIfBlockCondition: (ifBlockId, condition) =>
+            set((s) => {
+                const ifStep = s.pipeline.steps[ifBlockId];
+                if (!ifStep || ifStep.type !== "ifBlock") return {};
+                return {
+                    pipeline: {
+                        ...s.pipeline,
+                        steps: { ...s.pipeline.steps, [ifBlockId]: { ...ifStep, condition } },
+                    },
+                };
+            }),
 
         // ── Raster commands ───────────────────────────────────────────────────
         addRasterCommand: (stepId, type) =>
@@ -865,6 +1367,7 @@ export const useStore = create<AppState>()(
                     ...s.resources,
                     inputParameters: [...s.resources.inputParameters, p],
                 },
+                resourceOrder: [...s.resourceOrder, p.id],
             })),
         updateInputParameter: (id, patch) =>
             set((s) => ({
@@ -881,6 +1384,7 @@ export const useStore = create<AppState>()(
                     ...s.resources,
                     inputParameters: s.resources.inputParameters.filter((r) => r.id !== id),
                 },
+                resourceOrder: s.resourceOrder.filter((rid) => rid !== id),
                 selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
             })),
 

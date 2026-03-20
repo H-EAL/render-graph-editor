@@ -368,6 +368,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
         bindings: Record<string, string> | undefined;
         accessMap: Record<string, string>;
         sizeRefSlot: string | null;
+        constants: Record<string, number | boolean>;
     }
 
     /** All __renderGraph__.* entries: RT bindings (ResourceId) + scalars (number | boolean) */
@@ -397,34 +398,60 @@ export function importRgJson(raw: unknown): PipelineDocument {
         return result;
     }
 
+    /** Lookup map: inputParameter name → id, for resolving aliases */
+    const inputParamByName = new Map(inputParameters.map((p) => [p.name, p.id]));
+
     /**
      * Decode a node's dataJson object (slot name → encoded value) into binding data.
      * Encoding: lower 16 bits = RT index; upper 16 bits (hi):
      *   hi & 0x1 = read, hi & 0x2 = write, hi & 0x100 = size-reference flag.
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    function shaderBindingsFromDataJson(dataJson: any): BindingParseResult {
-        const empty: BindingParseResult = { bindings: undefined, accessMap: {}, sizeRefSlot: null };
+    function shaderBindingsFromDataJson(dataJson: any, aliases?: Record<string, string>): BindingParseResult {
+        const empty: BindingParseResult = { bindings: undefined, accessMap: {}, sizeRefSlot: null, constants: {} };
         if (!dataJson || typeof dataJson !== "object") return empty;
         const result: Record<string, string> = {};
         const accessMap: Record<string, string> = {};
+        const constants: Record<string, number | boolean> = {};
         let sizeRefSlot: string | null = null;
         for (const [slotName, encodedValue] of Object.entries(dataJson)) {
+            if (typeof encodedValue === "boolean") {
+                constants[slotName] = encodedValue;
+                continue;
+            }
             if (typeof encodedValue !== "number") continue;
+            // Non-integer (float) → scalar constant
+            if (!Number.isInteger(encodedValue)) {
+                constants[slotName] = encodedValue;
+                continue;
+            }
             const hi = (encodedValue as number) >>> 16;
             const rtIdx = (encodedValue as number) & 0xffff;
             const rid = rtById.get(rtIdx);
-            if (!rid) continue;
+            if (!rid) {
+                // Integer that doesn't resolve to a known RT → scalar constant
+                constants[slotName] = encodedValue as number;
+                continue;
+            }
             result[slotName] = rid;
             const accessBits = hi & 0x3;
             accessMap[slotName] =
                 accessBits === 3 ? "read_write" : accessBits === 2 ? "write" : "read";
             if (hi & 0x100) sizeRefSlot = slotName;
         }
+        // Merge input-parameter aliases: { slotName: paramName } → resolve to param id
+        for (const [slotName, paramName] of Object.entries(aliases ?? {})) {
+            const pid = inputParamByName.get(paramName);
+            if (pid && !result[slotName]) {
+                result[slotName] = pid;
+                accessMap[slotName] = "read";
+            }
+        }
         return {
             bindings: Object.keys(result).length > 0 ? result : undefined,
             accessMap,
             sizeRefSlot,
+            constants,
         };
     }
 
@@ -516,6 +543,11 @@ export function importRgJson(raw: unknown): PipelineDocument {
                     // 1 = draw batch, 2 = draw batch with materials, 8 = fullscreen/quad, 16 = debug
                     const pd = node.pipelineDescription;
                     const matInputs = materialInputsFromDataJson(node.dataJson);
+                    const aliasBindings: Record<string, string> = {};
+                    for (const [slotName, paramName] of Object.entries(node.aliases ?? {})) {
+                        const pid = inputParamByName.get(paramName as string);
+                        if (pid) aliasBindings[slotName] = pid;
+                    }
                     commands.push({
                         id: cmdId,
                         type: "drawBatch",
@@ -523,6 +555,8 @@ export function importRgJson(raw: unknown): PipelineDocument {
                         shader: nodeShaderMap.get(node.nodeIndex as number) ?? "",
                         materialInputs:
                             Object.keys(matInputs).length > 0 ? matInputs : undefined,
+                        shaderBindings:
+                            Object.keys(aliasBindings).length > 0 ? aliasBindings : undefined,
                         withMaterials: node.type === 2 || undefined,
                         depthTest: pd?.depthTestEnable ?? true,
                         depthWrite: pd?.depthWriteEnable ?? false,
@@ -701,7 +735,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
 
                 case 17: {
                     // dispatch compute
-                    const parsed = shaderBindingsFromDataJson(node.dataJson);
+                    const parsed = shaderBindingsFromDataJson(node.dataJson, node.aliases);
                     step = {
                         id: stepId,
                         type: "dispatchCompute",
@@ -713,6 +747,8 @@ export function importRgJson(raw: unknown): PipelineDocument {
                         shaderBindings: parsed.bindings,
                         shaderBindingAccess:
                             Object.keys(parsed.accessMap).length > 0 ? parsed.accessMap : undefined,
+                        shaderConstants:
+                            Object.keys(parsed.constants).length > 0 ? parsed.constants : undefined,
                         sizeReferenceSlot: parsed.sizeRefSlot ?? undefined,
                         groupsX: "ceil(viewport.width / 8)",
                         groupsY: "ceil(viewport.height / 8)",
@@ -723,7 +759,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
 
                 case 19: {
                     // dispatch ray tracing
-                    const parsed19 = shaderBindingsFromDataJson(node.dataJson);
+                    const parsed19 = shaderBindingsFromDataJson(node.dataJson, node.aliases);
                     step = {
                         id: stepId,
                         type: "dispatchRayTracing",
@@ -737,6 +773,10 @@ export function importRgJson(raw: unknown): PipelineDocument {
                             Object.keys(parsed19.accessMap).length > 0
                                 ? parsed19.accessMap
                                 : undefined,
+                        shaderConstants:
+                            Object.keys(parsed19.constants).length > 0
+                                ? parsed19.constants
+                                : undefined,
                         sizeReferenceSlot: parsed19.sizeRefSlot ?? undefined,
                         width: "viewport.width",
                         height: "viewport.height",
@@ -747,7 +787,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
                 default: {
                     // Types 2 (fullscreen shader), 3 (copy via shader), 8 (quad shader)
                     // → approximated as dispatchCompute
-                    const parsedDef = shaderBindingsFromDataJson(node.dataJson);
+                    const parsedDef = shaderBindingsFromDataJson(node.dataJson, node.aliases);
                     step = {
                         id: stepId,
                         type: "dispatchCompute",
@@ -760,6 +800,10 @@ export function importRgJson(raw: unknown): PipelineDocument {
                         shaderBindingAccess:
                             Object.keys(parsedDef.accessMap).length > 0
                                 ? parsedDef.accessMap
+                                : undefined,
+                        shaderConstants:
+                            Object.keys(parsedDef.constants).length > 0
+                                ? parsedDef.constants
                                 : undefined,
                         sizeReferenceSlot: parsedDef.sizeRefSlot ?? undefined,
                         groupsX: "ceil(viewport.width / 8)",
