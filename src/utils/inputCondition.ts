@@ -1,4 +1,5 @@
-import type { InputCondition, InputDefinition, InputId } from "../types";
+import type { InputCondition, InputDefinition, InputId, Pipeline, ResourceLibrary } from "../types";
+import { inferPassResources } from "./inferStepResources";
 
 // ─── Evaluation ───────────────────────────────────────────────────────────────
 
@@ -92,6 +93,40 @@ export function wouldCreateCycle(
         }
     }
     return false;
+}
+
+// ─── Pass usage ───────────────────────────────────────────────────────────────
+
+/**
+ * Returns all passes that reference the given input, either via pass/step
+ * conditions (e.g. "hbao", "!opaque") or via shader bindings that resolve to
+ * the matching InputParameter id. Each entry includes the usage kind.
+ */
+export function buildInputPassUsage(
+    inputId: InputId,
+    pipeline: Pipeline,
+    resources: ResourceLibrary,
+): Array<{ id: string; name: string; kind: "condition" | "data" | "both" }> {
+    const ipId = resources.inputParameters.find((p) => p.name === inputId)?.id;
+    const conditionMatch = (c: string) => c === inputId || c === `!${inputId}`;
+
+    const result: Array<{ id: string; name: string; kind: "condition" | "data" | "both" }> = [];
+    for (const pass of Object.values(pipeline.passes)) {
+        // Condition reference (pass-level conditions already aggregate all node conditions)
+        const usedInCondition = pass.conditions.some(conditionMatch);
+
+        // Shader binding reference — delegate to inferPassResources which handles all
+        // step types (raster cmd.shaderBindings, compute step.shaderBindings, materialInputs…)
+        const usedInBindings =
+            !!ipId && inferPassResources(pass, pipeline.steps).reads.includes(ipId);
+
+        if (usedInCondition || usedInBindings) {
+            const kind =
+                usedInCondition && usedInBindings ? "both" : usedInCondition ? "condition" : "data";
+            result.push({ id: pass.id, name: pass.name, kind });
+        }
+    }
+    return result;
 }
 
 // ─── Default factories ────────────────────────────────────────────────────────

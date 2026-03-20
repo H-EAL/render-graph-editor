@@ -680,6 +680,38 @@ export function PipelineTimelineView() {
         [resources],
     );
 
+    // Inferred reads for every pass (covers shader bindings, materialInputs, attachments).
+    // Computed once here and reused by both usedParamIds and allAccessMaps.
+    const passInferredReads = useMemo(() => {
+        const map = new Map<PassId, Set<ResourceId>>();
+        for (const pass of Object.values(pipeline.passes)) {
+            const { reads } = inferPassResources(pass, pipeline.steps as Record<string, Step>);
+            map.set(pass.id, new Set(reads));
+        }
+        return map;
+    }, [pipeline]);
+
+    // For input params: per-resource, per-pass kind ("condition" | "data" | "both")
+    const paramKindMap = useMemo(() => {
+        const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
+        const result = new Map<ResourceId, Map<PassId, "condition" | "data" | "both">>();
+        for (const p of resources.inputParameters) result.set(p.id, new Map());
+        for (const pass of Object.values(pipeline.passes)) {
+            for (const p of resources.inputParameters) {
+                const inCond = pass.conditions.some((c) => {
+                    const name = c.startsWith("!") ? c.slice(1) : c;
+                    return paramByName.get(name) === p.id;
+                });
+                const inData = passInferredReads.get(pass.id)?.has(p.id) ?? false;
+                if (inCond || inData) {
+                    const kind = inCond && inData ? "both" : inCond ? "condition" : "data";
+                    result.get(p.id)!.set(pass.id, kind);
+                }
+            }
+        }
+        return result;
+    }, [resources.inputParameters, pipeline.passes, passInferredReads]);
+
     // Overlay rows: ordered by resourceOrder, filtered to existing IDs
     const validResIds = useMemo(
         () =>
@@ -738,23 +770,24 @@ export function PipelineTimelineView() {
         return new Map(
             overlayRows.map((rid) => {
                 if (paramIds.has(rid)) {
-                    // Input parameters are "read" by any pass whose conditions reference the param name
+                    // Input params: "read" if any pass references them via conditions or shader bindings
                     const map = new Map<PassId, AccessKind>();
                     for (const pass of Object.values(pipeline.passes)) {
-                        for (const cond of pass.conditions) {
-                            const name = cond.startsWith("!") ? cond.slice(1) : cond;
-                            if (paramByName.get(name) === rid) {
-                                map.set(pass.id, "read");
-                                break;
-                            }
-                        }
+                        // Condition reference
+                        const inCond = pass.conditions.some((c) => {
+                            const name = c.startsWith("!") ? c.slice(1) : c;
+                            return paramByName.get(name) === rid;
+                        });
+                        // Shader binding reference (via precomputed inferred reads)
+                        const inBindings = passInferredReads.get(pass.id)?.has(rid) ?? false;
+                        if (inCond || inBindings) map.set(pass.id, "read");
                     }
                     return [rid, map] as const;
                 }
                 return [rid, derivePassAccess(rid, pipeline)] as const;
             }),
         );
-    }, [overlayRows, pipeline, resources.inputParameters]);
+    }, [overlayRows, pipeline, resources.inputParameters, passInferredReads]);
 
     // Focused layout: per-timeline linear layout, compressing non-relevant passes into ellipsis nodes
     type EllipsisNode = { count: number; x: number; y: number };
@@ -864,6 +897,7 @@ export function PipelineTimelineView() {
     // Input parameters referenced by any pass condition (by name)
     const usedParamIds = useMemo(() => {
         const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
+        const paramIdSet = new Set(resources.inputParameters.map((p) => p.id));
         const used = new Set<ResourceId>();
         for (const pass of Object.values(pipeline.passes)) {
             for (const cond of pass.conditions) {
@@ -872,8 +906,13 @@ export function PipelineTimelineView() {
                 if (pid) used.add(pid);
             }
         }
+        for (const reads of passInferredReads.values()) {
+            for (const rid of reads) {
+                if (paramIdSet.has(rid)) used.add(rid);
+            }
+        }
         return used;
-    }, [resources.inputParameters, pipeline.passes]);
+    }, [resources.inputParameters, pipeline.passes, passInferredReads]);
 
     const unusedIds = useMemo(() => {
         const unused = new Set<string>();
@@ -1411,9 +1450,11 @@ export function PipelineTimelineView() {
     const { writingPassIds, readingPassIds } = useMemo(() => {
         if (selectedResourceIds.size === 0)
             return { writingPassIds: new Set<PassId>(), readingPassIds: new Set<PassId>() };
+        const paramIdToName = new Map(resources.inputParameters.map((p) => [p.id, p.name]));
         const writing = new Set<PassId>();
         const reading = new Set<PassId>();
         for (const rid of selectedResourceIds) {
+            const paramName = paramIdToName.get(rid);
             for (const pass of Object.values(pipeline.passes)) {
                 const { reads: r, writes: w } = inferPassResources(
                     pass,
@@ -1421,10 +1462,15 @@ export function PipelineTimelineView() {
                 );
                 if (w.includes(rid)) writing.add(pass.id);
                 if (r.includes(rid)) reading.add(pass.id);
+                // Also count condition references for input parameters
+                if (paramName && pass.conditions.some((c) => {
+                    const name = c.startsWith("!") ? c.slice(1) : c;
+                    return name === paramName;
+                })) reading.add(pass.id);
             }
         }
         return { writingPassIds: writing, readingPassIds: reading };
-    }, [pipeline.passes, selectedResourceIds]);
+    }, [pipeline.passes, selectedResourceIds, resources.inputParameters]);
 
     const topH = PAD_T + pipeline.timelines.length * ROW_H + PAD_B;
     const bottomH = Math.max(filteredRows.length * OVERLAY_H + 8, 4);
@@ -2540,28 +2586,49 @@ export function PipelineTimelineView() {
                                             const access = map.get(passId);
                                             if (!access) return null;
                                             const isRW = access === "readwrite";
-                                            const badgeCls =
-                                                access === "read"
-                                                    ? "bg-sky-900/70 text-sky-300 border-sky-700/60 hover:bg-sky-800/80"
-                                                    : access === "write"
-                                                      ? "bg-amber-900/70 text-amber-300 border-amber-700/60 hover:bg-amber-800/80"
-                                                      : "border-sky-700/60 hover:opacity-90";
-                                            const label =
-                                                access === "readwrite"
-                                                    ? "RW"
-                                                    : access === "read"
-                                                      ? "R"
-                                                      : "W";
-                                            const tooltipAction =
-                                                access === "readwrite"
-                                                    ? "reads & writes"
-                                                    : `${access}s`;
+                                            // For input params, override label/style with condition/data kind
+                                            const paramKind = paramKindMap.get(rid)?.get(passId);
+                                            const badgeCls = paramKind
+                                                ? paramKind === "condition"
+                                                    ? "bg-violet-900/60 text-violet-300 border-violet-700/50 hover:bg-violet-800/70"
+                                                    : paramKind === "data"
+                                                      ? "bg-sky-900/70 text-sky-300 border-sky-700/60 hover:bg-sky-800/80"
+                                                      : "bg-violet-900/60 text-violet-300 border-violet-700/50 hover:bg-violet-800/70"
+                                                : access === "read"
+                                                  ? "bg-sky-900/70 text-sky-300 border-sky-700/60 hover:bg-sky-800/80"
+                                                  : access === "write"
+                                                    ? "bg-amber-900/70 text-amber-300 border-amber-700/60 hover:bg-amber-800/80"
+                                                    : "border-sky-700/60 hover:opacity-90";
+                                            const label = paramKind
+                                                ? paramKind === "condition"
+                                                    ? "cond"
+                                                    : paramKind === "data"
+                                                      ? "data"
+                                                      : "C+D"
+                                                : isRW
+                                                  ? "RW"
+                                                  : access === "read"
+                                                    ? "R"
+                                                    : "W";
+                                            const tooltipAction = paramKind
+                                                ? paramKind === "condition"
+                                                    ? "used as condition"
+                                                    : paramKind === "data"
+                                                      ? "used as shader data"
+                                                      : "used as condition & shader data"
+                                                : access === "readwrite"
+                                                  ? "reads & writes"
+                                                  : `${access}s`;
                                             const rowY = rowIdx * OVERLAY_H;
                                             return (
                                                 <div
                                                     key={`overlay-${rid}-${passId}`}
                                                     className={`absolute flex items-center justify-center border rounded-sm cursor-pointer text-[9px] font-bold font-mono overflow-hidden transition-opacity ${
-                                                        isRW ? "border-sky-700/60" : badgeCls
+                                                        paramKind === "both"
+                                                            ? "border-violet-700/50"
+                                                            : isRW
+                                                              ? "border-sky-700/60"
+                                                              : badgeCls
                                                     }`}
                                                     style={{
                                                         left: x + (NODE_W - 28) / 2,
@@ -2576,7 +2643,16 @@ export function PipelineTimelineView() {
                                                     }}
                                                     title={`${pipeline.passes[passId]?.name} — ${tooltipAction} ${name}`}
                                                 >
-                                                    {isRW ? (
+                                                    {paramKind === "both" ? (
+                                                        <>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-violet-900/60 text-violet-300 text-[8px]">
+                                                                C
+                                                            </span>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 text-[8px]">
+                                                                D
+                                                            </span>
+                                                        </>
+                                                    ) : isRW ? (
                                                         <>
                                                             <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 hover:bg-sky-800/80">
                                                                 R

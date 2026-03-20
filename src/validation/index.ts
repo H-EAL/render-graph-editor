@@ -1,11 +1,13 @@
-import type { Pipeline, ResourceLibrary, ValidationIssue, RasterStep, Step } from "../types";
+import type { Pipeline, ResourceLibrary, ValidationIssue, RasterStep, Step, InputDefinition } from "../types";
 import { deriveDependencies } from "../utils/dependencyGraph";
 import { inferPassResources } from "../utils/inferStepResources";
+import { buildInputPassUsage } from "../utils/inputCondition";
 import { newId } from "../utils/id";
 
 export function validateDocument(
     pipeline: Pipeline,
     resources: ResourceLibrary,
+    inputDefinitions?: InputDefinition[],
 ): ValidationIssue[] {
     const issues: ValidationIssue[] = [];
 
@@ -306,11 +308,29 @@ export function validateDocument(
         seenRes.add(rid);
     }
 
+    // ── Unused input warnings ────────────────────────────────────────────────
+    if (inputDefinitions) {
+        for (const def of inputDefinitions) {
+            const usedInPasses = buildInputPassUsage(def.id, pipeline, resources);
+            if (usedInPasses.length === 0) {
+                issues.push({
+                    id: newId(),
+                    severity: "warning",
+                    message: `Input "${def.label}" (${def.id}) is not used by any pass`,
+                    location: "Inputs",
+                });
+            }
+        }
+    }
+
     // ── Read-before-write check ─────────────────────────────────────────────
     // For each resource that is read by a pass, warn if no prior writer exists:
     //   • same-timeline writer at a lower index, OR
     //   • any cross-timeline writer (assumed to be semaphore-ordered before this pass)
+    // Input parameters are excluded — they are always-available read-only values.
     {
+        const inputParamIds = new Set(resources.inputParameters.map((p) => p.id));
+
         const resourceNames = new Map<string, string>([
             ...resources.renderTargets.map((r) => [r.id, r.name] as [string, string]),
             ...resources.buffers.map((b) => [b.id, b.name] as [string, string]),
@@ -348,6 +368,7 @@ export function validateDocument(
         }
 
         for (const [rid, readers] of resReaders) {
+            if (inputParamIds.has(rid)) continue; // inputs are read-only, no write expected
             const writers = resWriters.get(rid) ?? [];
             const resName = resourceNames.get(rid) ?? rid;
             for (const reader of readers) {

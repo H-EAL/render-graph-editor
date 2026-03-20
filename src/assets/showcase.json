@@ -1,0 +1,1128 @@
+{
+  "pipeline": {
+    "id": "pipeline-showcase",
+    "name": "Feature Showcase Pipeline",
+    "version": 2,
+    "timelines": [
+      {
+        "id": "tl-graphics",
+        "name": "Graphics",
+        "type": "graphics",
+        "passIds": [
+          "pass-gbuffer",
+          "pass-shadow",
+          "pass-ao",
+          "pass-decals",
+          "pass-reflections",
+          "pass-lighting",
+          "pass-bloom-prep",
+          "pass-postprocess",
+          "pass-output"
+        ]
+      },
+      {
+        "id": "tl-async-compute",
+        "name": "Async Compute",
+        "type": "asyncCompute",
+        "passIds": ["pass-particles", "pass-cull"]
+      },
+      {
+        "id": "tl-transfer",
+        "name": "Transfer",
+        "type": "transfer",
+        "passIds": ["pass-mipgen"]
+      }
+    ],
+    "passes": {
+      "pass-gbuffer": {
+        "id": "pass-gbuffer",
+        "name": "G-Buffer",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Geometry pass — writes albedo+roughness, packed normals+metallic, screen-space motion vectors and the primary depth buffer.",
+        "reads": [],
+        "writes": ["rt-gbuffer-albedo", "rt-gbuffer-normal", "rt-gbuffer-depth", "rt-gbuffer-motion"],
+        "steps": ["step-gbuffer-raster"]
+      },
+      "pass-shadow": {
+        "id": "pass-shadow",
+        "name": "Shadow Maps",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": ["enableShadows"],
+        "notes": "Cascaded shadow map render. Controlled by the enableShadows input — the entire pass is skipped when false. Depth bias is set dynamically per cascade.",
+        "reads": [],
+        "writes": ["rt-shadow-map"],
+        "steps": ["step-shadow-raster"]
+      },
+      "pass-ao": {
+        "id": "pass-ao",
+        "name": "Ambient Occlusion",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": ["enableAO"],
+        "notes": "Screen-space AO with two quality variants: SSAO (fast, fewer samples) and HBAO+ (high quality, horizon-based). The active variant is driven by the aoQuality input. Both variants share a clear step and use data selectors to tune their radius from the same input.",
+        "reads": ["rt-gbuffer-depth", "rt-gbuffer-normal"],
+        "writes": ["rt-ao"],
+        "steps": ["step-ao-clear", "step-ao-ssao", "step-ao-hbao"],
+        "variants": [
+          {
+            "id": "var-ssao",
+            "name": "SSAO",
+            "selector": "SSAO",
+            "activeSteps": ["step-ao-clear", "step-ao-ssao"]
+          },
+          {
+            "id": "var-hbao",
+            "name": "HBAO+",
+            "selector": "HBAO",
+            "activeSteps": ["step-ao-clear", "step-ao-hbao"]
+          }
+        ]
+      },
+      "pass-decals": {
+        "id": "pass-decals",
+        "name": "Decals",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Compute decal projection onto the G-Buffer albedo channel. Uses dispatchComputeDecals to iterate over the decal material set.",
+        "reads": ["rt-gbuffer-depth"],
+        "writes": ["rt-gbuffer-albedo"],
+        "steps": ["step-decals-compute"]
+      },
+      "pass-reflections": {
+        "id": "pass-reflections",
+        "name": "Ray-Traced Reflections",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": ["enableReflections"],
+        "notes": "Hardware ray-traced reflections pass. Skipped when enableReflections is false. Ray budget and roughness cutoff are driven by the reflectionQuality input via data selectors.",
+        "reads": ["rt-gbuffer-albedo", "rt-gbuffer-normal", "rt-gbuffer-depth"],
+        "writes": ["rt-reflections"],
+        "steps": ["step-reflections-rt"]
+      },
+      "pass-lighting": {
+        "id": "pass-lighting",
+        "name": "Deferred Lighting",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Deferred PBR shading resolve. Reads the full G-Buffer, AO, reflections and optionally the shadow map. Manually depends on pass-cull (async compute) to ensure the light list is populated before shading. Scene exposure, shadow/AO/reflection strengths are all driven by data selectors.",
+        "reads": ["rt-gbuffer-albedo", "rt-gbuffer-normal", "rt-gbuffer-depth", "rt-ao", "rt-shadow-map", "rt-reflections", "buf-lights"],
+        "writes": ["rt-lighting"],
+        "manualDeps": ["pass-cull"],
+        "steps": ["step-lighting-compute"]
+      },
+      "pass-bloom-prep": {
+        "id": "pass-bloom-prep",
+        "name": "Bloom Downsample",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": ["enableBloom"],
+        "notes": "Downsamples the HDR lighting result to half resolution for bloom processing using a bilinear blit.",
+        "reads": ["rt-lighting"],
+        "writes": ["rt-bloom"],
+        "steps": ["step-bloom-downscale"]
+      },
+      "pass-postprocess": {
+        "id": "pass-postprocess",
+        "name": "Post-Process",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Post-processing stack driven by a nested if-block tree. Top-level branch: if enableDebugViz → debug channel visualizer; else → tonemap then (if enableBloom → bloom composite; else → skip). This showcases nested ifBlock steps, input-driven conditions, and data selectors all interacting.",
+        "reads": ["rt-lighting", "rt-bloom", "rt-gbuffer-albedo", "rt-gbuffer-normal", "rt-gbuffer-depth", "rt-ao"],
+        "writes": ["rt-tonemap", "rt-debug"],
+        "steps": ["step-post-ifblock"]
+      },
+      "pass-output": {
+        "id": "pass-output",
+        "name": "Output Composite",
+        "timelineId": "tl-graphics",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Final composite to the backbuffer. A data selector (kind: select) picks the source buffer at runtime: the debug visualization when enableDebugViz is true, the tonemapped LDR output otherwise.",
+        "reads": ["rt-tonemap", "rt-debug"],
+        "writes": ["rt-final"],
+        "steps": ["step-output-composite"]
+      },
+      "pass-particles": {
+        "id": "pass-particles",
+        "name": "Particle Simulation",
+        "timelineId": "tl-async-compute",
+        "enabled": true,
+        "conditions": ["enableParticles"],
+        "notes": "GPU particle simulation on the async compute queue. Integrates velocity, applies forces, and manages particle lifetime. Skipped when enableParticles is false.",
+        "reads": [],
+        "writes": ["buf-particles"],
+        "steps": ["step-particles-compute"]
+      },
+      "pass-cull": {
+        "id": "pass-cull",
+        "name": "GPU Culling",
+        "timelineId": "tl-async-compute",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Tile-based GPU light culling running asynchronously. First clears the indirect args buffer (fillBuffer), then dispatches the cull shader to populate per-tile light indices. pass-lighting on graphics manually depends on this pass.",
+        "reads": ["rt-gbuffer-depth"],
+        "writes": ["buf-cull-args", "buf-lights"],
+        "steps": ["step-fill-cull-args", "step-cull-compute"]
+      },
+      "pass-mipgen": {
+        "id": "pass-mipgen",
+        "name": "Lighting Mip Chain",
+        "timelineId": "tl-transfer",
+        "enabled": true,
+        "conditions": [],
+        "notes": "Generates the full mip chain of the HDR lighting buffer on the transfer queue, so it can be sampled as an environment map for reflection probes in the next frame.",
+        "reads": [],
+        "writes": ["rt-lighting"],
+        "steps": ["step-mipgen"]
+      }
+    },
+    "steps": {
+      "step-gbuffer-raster": {
+        "id": "step-gbuffer-raster",
+        "name": "GBuffer Raster",
+        "type": "raster",
+        "reads": [],
+        "writes": ["rt-gbuffer-albedo", "rt-gbuffer-normal", "rt-gbuffer-depth", "rt-gbuffer-motion"],
+        "conditions": [],
+        "attachments": {
+          "colorAttachments": [
+            {
+              "target": "rt-gbuffer-albedo",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [0.0, 0.0, 0.0, 1.0]
+            },
+            {
+              "target": "rt-gbuffer-normal",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [0.5, 0.5, 1.0, 0.0]
+            },
+            {
+              "target": "rt-gbuffer-motion",
+              "loadOp": "clear",
+              "storeOp": "store",
+              "clearValue": [0.0, 0.0, 0.0, 0.0]
+            }
+          ],
+          "depthAttachment": {
+            "target": "rt-gbuffer-depth",
+            "loadOp": "clear",
+            "storeOp": "store",
+            "clearValue": 1.0
+          }
+        },
+        "commands": [
+          {
+            "id": "cmd-gbuffer-viewport",
+            "type": "setDynamicState",
+            "name": "Viewport",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": "viewport.width",
+            "height": "viewport.height",
+            "minDepth": 0.0,
+            "maxDepth": 1.0
+          },
+          {
+            "id": "cmd-draw-opaque",
+            "type": "drawBatch",
+            "name": "Draw Opaque",
+            "shader": "sh-gbuffer",
+            "shaderBindings": {},
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "back",
+            "withMaterials": true,
+            "batchTag": "opaque"
+          },
+          {
+            "id": "cmd-draw-alpha-test",
+            "type": "drawBatch",
+            "name": "Draw Alpha-Test",
+            "shader": "sh-gbuffer",
+            "blendState": "bs-alpha-blend",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "none",
+            "withMaterials": true,
+            "batchTag": "alphaTest"
+          }
+        ]
+      },
+      "step-shadow-raster": {
+        "id": "step-shadow-raster",
+        "name": "Shadow Raster",
+        "type": "raster",
+        "reads": [],
+        "writes": ["rt-shadow-map"],
+        "conditions": ["enableShadows"],
+        "attachments": {
+          "colorAttachments": [],
+          "depthAttachment": {
+            "target": "rt-shadow-map",
+            "loadOp": "clear",
+            "storeOp": "store",
+            "clearValue": 1.0
+          }
+        },
+        "commands": [
+          {
+            "id": "cmd-shadow-viewport",
+            "type": "setDynamicState",
+            "name": "Shadow Viewport",
+            "stateType": "viewport",
+            "x": 0,
+            "y": 0,
+            "width": 2048,
+            "height": 2048,
+            "minDepth": 0.0,
+            "maxDepth": 1.0
+          },
+          {
+            "id": "cmd-shadow-bias",
+            "type": "setDynamicState",
+            "name": "Depth Bias",
+            "stateType": "depthBias",
+            "constantFactor": 2.5,
+            "clamp": 0.0,
+            "slopeFactor": 3.0
+          },
+          {
+            "id": "cmd-shadow-stencil",
+            "type": "setDynamicState",
+            "name": "Stencil Ref",
+            "stateType": "stencilRef",
+            "reference": 1
+          },
+          {
+            "id": "cmd-draw-shadow-casters",
+            "type": "drawBatch",
+            "name": "Shadow Casters",
+            "shader": "sh-shadow",
+            "depthTest": true,
+            "depthWrite": true,
+            "cullMode": "front",
+            "batchTag": "shadow"
+          }
+        ]
+      },
+      "step-ao-clear": {
+        "id": "step-ao-clear",
+        "name": "Clear AO Buffer",
+        "type": "clearImages",
+        "reads": [],
+        "writes": ["rt-ao"],
+        "conditions": ["enableAO"],
+        "targets": [
+          {
+            "target": "rt-ao",
+            "clearValue": [1.0, 1.0, 1.0, 1.0]
+          }
+        ]
+      },
+      "step-ao-ssao": {
+        "id": "step-ao-ssao",
+        "name": "SSAO Dispatch",
+        "type": "dispatchCompute",
+        "reads": ["rt-gbuffer-depth", "rt-gbuffer-normal"],
+        "writes": ["rt-ao"],
+        "conditions": ["enableAO"],
+        "shader": "sh-ssao-cs",
+        "shaderBindings": {
+          "depthBuffer": "rt-gbuffer-depth",
+          "normalBuffer": "rt-gbuffer-normal",
+          "aoOutput": "rt-ao"
+        },
+        "shaderBindingAccess": {
+          "depthBuffer": "read",
+          "normalBuffer": "read",
+          "aoOutput": "write"
+        },
+        "shaderConstants": {
+          "sampleCount": 16,
+          "bias": 0.025
+        },
+        "fieldSelectors": {
+          "radius": {
+            "kind": "select",
+            "condition": "aoQuality",
+            "trueValue": { "kind": "constant", "value": 0.8 },
+            "falseValue": { "kind": "constant", "value": 0.4 }
+          }
+        },
+        "sizeReferenceSlot": "aoOutput",
+        "groupsX": 8,
+        "groupsY": 8,
+        "groupsZ": 1
+      },
+      "step-ao-hbao": {
+        "id": "step-ao-hbao",
+        "name": "HBAO+ Dispatch",
+        "type": "dispatchCompute",
+        "reads": ["rt-gbuffer-depth", "rt-gbuffer-normal"],
+        "writes": ["rt-ao"],
+        "conditions": ["enableAO"],
+        "shader": "sh-hbao-cs",
+        "shaderBindings": {
+          "depthBuffer": "rt-gbuffer-depth",
+          "normalBuffer": "rt-gbuffer-normal",
+          "aoOutput": "rt-ao"
+        },
+        "shaderBindingAccess": {
+          "depthBuffer": "read",
+          "normalBuffer": "read",
+          "aoOutput": "write"
+        },
+        "shaderConstants": {
+          "stepCount": 4,
+          "directionCount": 8
+        },
+        "fieldSelectors": {
+          "maxRadius": {
+            "kind": "select",
+            "condition": "aoQuality",
+            "trueValue": { "kind": "constant", "value": 1.5 },
+            "falseValue": { "kind": "constant", "value": 0.8 }
+          }
+        },
+        "sizeReferenceSlot": "aoOutput",
+        "groupsX": 8,
+        "groupsY": 8,
+        "groupsZ": 1
+      },
+      "step-decals-compute": {
+        "id": "step-decals-compute",
+        "name": "Decal Projection",
+        "type": "dispatchComputeDecals",
+        "reads": ["rt-gbuffer-depth"],
+        "writes": ["rt-gbuffer-albedo"],
+        "conditions": [],
+        "shader": "sh-decals-cs",
+        "shaderBindings": {
+          "depthIn": "rt-gbuffer-depth",
+          "albedoInOut": "rt-gbuffer-albedo"
+        },
+        "shaderBindingAccess": {
+          "depthIn": "read",
+          "albedoInOut": "read_write"
+        },
+        "materialSet": "decals",
+        "batchTag": "decal",
+        "groupsX": 8,
+        "groupsY": 8,
+        "groupsZ": 1
+      },
+      "step-reflections-rt": {
+        "id": "step-reflections-rt",
+        "name": "Ray-Traced Reflections",
+        "type": "dispatchRayTracing",
+        "reads": ["rt-gbuffer-albedo", "rt-gbuffer-normal", "rt-gbuffer-depth"],
+        "writes": ["rt-reflections"],
+        "conditions": ["enableReflections"],
+        "raygenShader": "sh-reflections-rgen",
+        "missShader": "sh-reflections-rmiss",
+        "closestHitShader": "sh-reflections-rchit",
+        "shaderBindings": {
+          "albedoIn": "rt-gbuffer-albedo",
+          "normalIn": "rt-gbuffer-normal",
+          "depthIn": "rt-gbuffer-depth",
+          "reflectionsOut": "rt-reflections"
+        },
+        "shaderBindingAccess": {
+          "albedoIn": "read",
+          "normalIn": "read",
+          "depthIn": "read",
+          "reflectionsOut": "write"
+        },
+        "fieldSelectors": {
+          "maxBounces": {
+            "kind": "select",
+            "condition": "reflectionQuality",
+            "trueValue": { "kind": "constant", "value": 3 },
+            "falseValue": { "kind": "constant", "value": 1 }
+          },
+          "roughnessCutoff": {
+            "kind": "select",
+            "condition": "reflectionQuality",
+            "trueValue": { "kind": "constant", "value": 0.9 },
+            "falseValue": { "kind": "constant", "value": 0.3 }
+          }
+        },
+        "width": "viewport.width",
+        "height": "viewport.height"
+      },
+      "step-lighting-compute": {
+        "id": "step-lighting-compute",
+        "name": "Deferred Lighting",
+        "type": "dispatchCompute",
+        "reads": ["rt-gbuffer-albedo", "rt-gbuffer-normal", "rt-gbuffer-depth", "rt-ao", "rt-shadow-map", "rt-reflections", "buf-lights"],
+        "writes": ["rt-lighting"],
+        "conditions": [],
+        "shader": "sh-lighting-cs",
+        "shaderBindings": {
+          "albedoIn": "rt-gbuffer-albedo",
+          "normalIn": "rt-gbuffer-normal",
+          "depthIn": "rt-gbuffer-depth",
+          "aoIn": "rt-ao",
+          "shadowMap": "rt-shadow-map",
+          "reflectionsIn": "rt-reflections",
+          "lightList": "buf-lights",
+          "lightingOut": "rt-lighting"
+        },
+        "shaderBindingAccess": {
+          "albedoIn": "read",
+          "normalIn": "read",
+          "depthIn": "read",
+          "aoIn": "read",
+          "shadowMap": "read",
+          "reflectionsIn": "read",
+          "lightList": "read",
+          "lightingOut": "write"
+        },
+        "fieldSelectors": {
+          "exposure": {
+            "kind": "input",
+            "inputId": "exposureValue"
+          },
+          "aoStrength": {
+            "kind": "select",
+            "condition": "enableAO",
+            "trueValue": { "kind": "constant", "value": 1.0 },
+            "falseValue": { "kind": "constant", "value": 0.0 }
+          },
+          "shadowStrength": {
+            "kind": "select",
+            "condition": "enableShadows",
+            "trueValue": { "kind": "constant", "value": 1.0 },
+            "falseValue": { "kind": "constant", "value": 0.0 }
+          },
+          "reflectionStrength": {
+            "kind": "select",
+            "condition": "enableReflections",
+            "trueValue": { "kind": "constant", "value": 1.0 },
+            "falseValue": { "kind": "constant", "value": 0.0 }
+          }
+        },
+        "sizeReferenceSlot": "lightingOut",
+        "groupsX": 8,
+        "groupsY": 8,
+        "groupsZ": 1
+      },
+      "step-bloom-downscale": {
+        "id": "step-bloom-downscale",
+        "name": "Bloom Downsample",
+        "type": "blitImage",
+        "reads": ["rt-lighting"],
+        "writes": ["rt-bloom"],
+        "conditions": ["enableBloom"],
+        "source": "rt-lighting",
+        "destination": "rt-bloom",
+        "filter": "linear"
+      },
+      "step-post-ifblock": {
+        "id": "step-post-ifblock",
+        "name": "Post-Process Branch",
+        "type": "ifBlock",
+        "reads": ["rt-lighting", "rt-bloom"],
+        "writes": ["rt-tonemap", "rt-debug"],
+        "conditions": [],
+        "condition": "enableDebugViz",
+        "thenSteps": ["step-debug-viz"],
+        "elseSteps": ["step-tonemap", "step-bloom-ifblock"]
+      },
+      "step-debug-viz": {
+        "id": "step-debug-viz",
+        "name": "Debug Visualizer",
+        "type": "dispatchCompute",
+        "reads": ["rt-gbuffer-albedo", "rt-gbuffer-normal", "rt-gbuffer-depth", "rt-ao", "rt-lighting"],
+        "writes": ["rt-debug"],
+        "conditions": ["enableDebugViz"],
+        "shader": "sh-debug-cs",
+        "shaderBindings": {
+          "albedoIn": "rt-gbuffer-albedo",
+          "normalIn": "rt-gbuffer-normal",
+          "depthIn": "rt-gbuffer-depth",
+          "aoIn": "rt-ao",
+          "lightingIn": "rt-lighting",
+          "debugOut": "rt-debug"
+        },
+        "shaderBindingAccess": {
+          "albedoIn": "read",
+          "normalIn": "read",
+          "depthIn": "read",
+          "aoIn": "read",
+          "lightingIn": "read",
+          "debugOut": "write"
+        },
+        "fieldSelectors": {
+          "channel": {
+            "kind": "input",
+            "inputId": "debugChannel"
+          }
+        },
+        "sizeReferenceSlot": "debugOut",
+        "groupsX": 8,
+        "groupsY": 8,
+        "groupsZ": 1
+      },
+      "step-tonemap": {
+        "id": "step-tonemap",
+        "name": "Tonemap & Grade",
+        "type": "dispatchCompute",
+        "reads": ["rt-lighting"],
+        "writes": ["rt-tonemap"],
+        "conditions": ["!enableDebugViz"],
+        "shader": "sh-tonemap-cs",
+        "shaderBindings": {
+          "hdrIn": "rt-lighting",
+          "ldrOut": "rt-tonemap"
+        },
+        "shaderBindingAccess": {
+          "hdrIn": "read",
+          "ldrOut": "write"
+        },
+        "fieldSelectors": {
+          "exposure": {
+            "kind": "input",
+            "inputId": "exposureValue"
+          },
+          "vignetteStrength": {
+            "kind": "select",
+            "condition": "taaEnabled",
+            "trueValue": { "kind": "constant", "value": 0.3 },
+            "falseValue": { "kind": "constant", "value": 0.0 }
+          }
+        },
+        "sizeReferenceSlot": "ldrOut",
+        "groupsX": 8,
+        "groupsY": 8,
+        "groupsZ": 1
+      },
+      "step-bloom-ifblock": {
+        "id": "step-bloom-ifblock",
+        "name": "Bloom Branch",
+        "type": "ifBlock",
+        "reads": ["rt-bloom", "rt-tonemap"],
+        "writes": ["rt-tonemap"],
+        "conditions": ["!enableDebugViz"],
+        "condition": "enableBloom",
+        "thenSteps": ["step-bloom-dispatch"],
+        "elseSteps": []
+      },
+      "step-bloom-dispatch": {
+        "id": "step-bloom-dispatch",
+        "name": "Bloom Composite",
+        "type": "dispatchCompute",
+        "reads": ["rt-bloom", "rt-tonemap"],
+        "writes": ["rt-tonemap"],
+        "conditions": ["!enableDebugViz", "enableBloom"],
+        "shader": "sh-bloom-cs",
+        "shaderBindings": {
+          "bloomIn": "rt-bloom",
+          "frameInOut": "rt-tonemap"
+        },
+        "shaderBindingAccess": {
+          "bloomIn": "read",
+          "frameInOut": "read_write"
+        },
+        "fieldSelectors": {
+          "intensity": {
+            "kind": "input",
+            "inputId": "bloomIntensity"
+          },
+          "threshold": {
+            "kind": "select",
+            "condition": "taaEnabled",
+            "trueValue": { "kind": "constant", "value": 0.8 },
+            "falseValue": { "kind": "constant", "value": 1.2 }
+          }
+        },
+        "sizeReferenceSlot": "frameInOut",
+        "groupsX": 8,
+        "groupsY": 8,
+        "groupsZ": 1
+      },
+      "step-output-composite": {
+        "id": "step-output-composite",
+        "name": "Output Composite",
+        "type": "dispatchCompute",
+        "reads": ["rt-tonemap", "rt-debug"],
+        "writes": ["rt-final"],
+        "conditions": [],
+        "shader": "sh-composite-cs",
+        "shaderBindings": {
+          "tonemapIn": "rt-tonemap",
+          "debugIn": "rt-debug",
+          "finalOut": "rt-final"
+        },
+        "shaderBindingAccess": {
+          "tonemapIn": "read",
+          "debugIn": "read",
+          "finalOut": "write"
+        },
+        "fieldSelectors": {
+          "tonemapIn": {
+            "kind": "select",
+            "condition": "enableDebugViz",
+            "trueValue": { "kind": "constant", "value": "rt-debug" },
+            "falseValue": { "kind": "constant", "value": "rt-tonemap" }
+          }
+        },
+        "sizeReferenceSlot": "finalOut",
+        "groupsX": 8,
+        "groupsY": 8,
+        "groupsZ": 1
+      },
+      "step-particles-compute": {
+        "id": "step-particles-compute",
+        "name": "Particle Simulation",
+        "type": "dispatchCompute",
+        "reads": [],
+        "writes": ["buf-particles"],
+        "conditions": ["enableParticles"],
+        "shader": "sh-particle-sim-cs",
+        "shaderBindings": {
+          "particleBuffer": "buf-particles"
+        },
+        "shaderBindingAccess": {
+          "particleBuffer": "read_write"
+        },
+        "shaderConstants": {
+          "maxParticles": 65536,
+          "drag": 0.98
+        },
+        "groupsX": 64,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-fill-cull-args": {
+        "id": "step-fill-cull-args",
+        "name": "Clear Cull Args",
+        "type": "fillBuffer",
+        "reads": [],
+        "writes": ["buf-cull-args"],
+        "conditions": [],
+        "target": "buf-cull-args",
+        "value": 0
+      },
+      "step-cull-compute": {
+        "id": "step-cull-compute",
+        "name": "GPU Cull",
+        "type": "dispatchCompute",
+        "reads": ["rt-gbuffer-depth"],
+        "writes": ["buf-cull-args", "buf-lights"],
+        "conditions": [],
+        "shader": "sh-cull-cs",
+        "shaderBindings": {
+          "hiZDepth": "rt-gbuffer-depth",
+          "cullArgsOut": "buf-cull-args",
+          "lightsOut": "buf-lights"
+        },
+        "shaderBindingAccess": {
+          "hiZDepth": "read",
+          "cullArgsOut": "write",
+          "lightsOut": "write"
+        },
+        "groupsX": 16,
+        "groupsY": 1,
+        "groupsZ": 1
+      },
+      "step-mipgen": {
+        "id": "step-mipgen",
+        "name": "Generate Lighting Mips",
+        "type": "generateMipChain",
+        "reads": [],
+        "writes": ["rt-lighting"],
+        "conditions": [],
+        "target": "rt-lighting",
+        "filter": "linear"
+      }
+    }
+  },
+  "resources": {
+    "renderTargets": [
+      {
+        "id": "rt-gbuffer-albedo",
+        "name": "gbufferAlbedo",
+        "format": "rgba8",
+        "width": 0,
+        "height": 0,
+        "mips": 1,
+        "layers": 1,
+        "description": "G-Buffer ch0 — baseColor.rgb + roughness.a"
+      },
+      {
+        "id": "rt-gbuffer-normal",
+        "name": "gbufferNormal",
+        "format": "rgba16f",
+        "width": 0,
+        "height": 0,
+        "mips": 1,
+        "layers": 1,
+        "description": "G-Buffer ch1 — world-space normals.xyz + metallic.a"
+      },
+      {
+        "id": "rt-gbuffer-depth",
+        "name": "gbufferDepth",
+        "format": "d32f",
+        "width": 0,
+        "height": 0,
+        "mips": 1,
+        "layers": 1,
+        "description": "Primary depth buffer (reversed-Z)"
+      },
+      {
+        "id": "rt-gbuffer-motion",
+        "name": "gbufferMotion",
+        "format": "rg16f",
+        "width": 0,
+        "height": 0,
+        "mips": 1,
+        "layers": 1,
+        "description": "Screen-space motion vectors for TAA and motion blur"
+      },
+      {
+        "id": "rt-ao",
+        "name": "ambientOcclusion",
+        "format": "r32f",
+        "width": 0,
+        "height": 0,
+        "mips": 1,
+        "layers": 1,
+        "description": "Screen-space ambient occlusion factor [0..1]"
+      },
+      {
+        "id": "rt-shadow-map",
+        "name": "shadowMap",
+        "format": "d32f",
+        "width": 2048,
+        "height": 2048,
+        "mips": 1,
+        "layers": 4,
+        "description": "4-cascade directional shadow map atlas"
+      },
+      {
+        "id": "rt-reflections",
+        "name": "reflections",
+        "format": "rgba16f",
+        "width": 0,
+        "height": 0,
+        "mips": 1,
+        "layers": 1,
+        "description": "Ray-traced reflection radiance"
+      },
+      {
+        "id": "rt-lighting",
+        "name": "hdrLighting",
+        "format": "rgba16f",
+        "width": 0,
+        "height": 0,
+        "mips": 8,
+        "layers": 1,
+        "description": "HDR deferred shading result — mip chain generated by transfer pass for next-frame env use"
+      },
+      {
+        "id": "rt-bloom",
+        "name": "bloomScratch",
+        "format": "rgba16f",
+        "width": 0.5,
+        "height": 0.5,
+        "mips": 1,
+        "layers": 1,
+        "description": "Half-resolution bloom scratch buffer"
+      },
+      {
+        "id": "rt-tonemap",
+        "name": "tonemappedLDR",
+        "format": "rgba8",
+        "width": 0,
+        "height": 0,
+        "mips": 1,
+        "layers": 1,
+        "description": "LDR tonemapped output before final composite"
+      },
+      {
+        "id": "rt-debug",
+        "name": "debugVisualization",
+        "format": "rgba8",
+        "width": 0,
+        "height": 0,
+        "mips": 1,
+        "layers": 1,
+        "description": "Debug channel overlay — selected by the debugChannel input parameter"
+      },
+      {
+        "id": "rt-final",
+        "name": "finalOutput",
+        "format": "rgba8",
+        "width": 0,
+        "height": 0,
+        "mips": 1,
+        "layers": 1,
+        "description": "Backbuffer: either tonemapped LDR or debug overlay, selected at runtime by a data selector"
+      }
+    ],
+    "buffers": [
+      {
+        "id": "buf-particles",
+        "name": "particleBuffer",
+        "size": 4194304,
+        "description": "GPU particle data — position, velocity, lifetime (65536 × 64 bytes)"
+      },
+      {
+        "id": "buf-cull-args",
+        "name": "cullIndirectArgs",
+        "size": 256,
+        "description": "Indirect dispatch arguments cleared by fillBuffer then written by the cull shader"
+      },
+      {
+        "id": "buf-lights",
+        "name": "lightList",
+        "size": 1048576,
+        "description": "Per-tile visible light index list produced by GPU culling"
+      }
+    ],
+    "blendStates": [
+      {
+        "id": "bs-alpha-blend",
+        "name": "Alpha Blend",
+        "enabled": true,
+        "srcColor": "srcAlpha",
+        "dstColor": "oneMinusSrcAlpha",
+        "colorOp": "add",
+        "srcAlpha": "one",
+        "dstAlpha": "oneMinusSrcAlpha",
+        "alphaOp": "add",
+        "description": "Standard premultiplied alpha blend for alpha-tested geometry"
+      },
+      {
+        "id": "bs-additive",
+        "name": "Additive",
+        "enabled": true,
+        "srcColor": "one",
+        "dstColor": "one",
+        "colorOp": "add",
+        "srcAlpha": "one",
+        "dstAlpha": "one",
+        "alphaOp": "add",
+        "description": "Additive blend for particles, glows and lens flares"
+      }
+    ],
+    "shaders": [
+      {
+        "id": "sh-gbuffer",
+        "name": "GBuffer",
+        "stage": "vertex",
+        "path": "shaders/gbuffer.hlsl",
+        "entryPoint": "VSMain",
+        "description": "G-Buffer vertex + fragment — writes albedo, packed normals, motion vectors"
+      },
+      {
+        "id": "sh-shadow",
+        "name": "ShadowDepth",
+        "stage": "vertex",
+        "path": "shaders/shadow_depth.hlsl",
+        "entryPoint": "VSMain",
+        "description": "Depth-only shadow caster vertex shader"
+      },
+      {
+        "id": "sh-ssao-cs",
+        "name": "SSAO",
+        "stage": "compute",
+        "path": "shaders/ao/ssao.hlsl",
+        "entryPoint": "CSMain",
+        "description": "Screen-Space Ambient Occlusion — radius driven by aoQuality data selector"
+      },
+      {
+        "id": "sh-hbao-cs",
+        "name": "HBAO+",
+        "stage": "compute",
+        "path": "shaders/ao/hbao.hlsl",
+        "entryPoint": "CSMain",
+        "description": "Horizon-Based Ambient Occlusion — maxRadius driven by aoQuality data selector"
+      },
+      {
+        "id": "sh-decals-cs",
+        "name": "DecalProjection",
+        "stage": "compute",
+        "path": "shaders/decals/project.hlsl",
+        "entryPoint": "CSMain",
+        "description": "Compute decal projection — stamps albedo/roughness onto the G-Buffer"
+      },
+      {
+        "id": "sh-reflections-rgen",
+        "name": "Reflections Raygen",
+        "stage": "raygen",
+        "path": "shaders/rt/reflections.hlsl",
+        "entryPoint": "RayGenMain",
+        "description": "Ray-traced reflections raygen — maxBounces and roughnessCutoff driven by reflectionQuality"
+      },
+      {
+        "id": "sh-reflections-rmiss",
+        "name": "Reflections Miss",
+        "stage": "miss",
+        "path": "shaders/rt/reflections.hlsl",
+        "entryPoint": "MissMain",
+        "description": "Reflection miss shader — samples the skybox when no geometry is hit"
+      },
+      {
+        "id": "sh-reflections-rchit",
+        "name": "Reflections ClosestHit",
+        "stage": "closesthit",
+        "path": "shaders/rt/reflections.hlsl",
+        "entryPoint": "ClosestHitMain",
+        "description": "Reflection closest-hit shader — evaluates PBR BRDF at hit point"
+      },
+      {
+        "id": "sh-lighting-cs",
+        "name": "DeferredLighting",
+        "stage": "compute",
+        "path": "shaders/lighting/deferred.hlsl",
+        "entryPoint": "CSMain",
+        "description": "Deferred PBR shading resolve — exposure/aoStrength/shadowStrength/reflectionStrength all driven by data selectors"
+      },
+      {
+        "id": "sh-tonemap-cs",
+        "name": "Tonemap",
+        "stage": "compute",
+        "path": "shaders/post/tonemap.hlsl",
+        "entryPoint": "CSMain",
+        "description": "Filmic tonemap + color grade — exposure driven by input, vignette driven by taaEnabled selector"
+      },
+      {
+        "id": "sh-bloom-cs",
+        "name": "BloomComposite",
+        "stage": "compute",
+        "path": "shaders/post/bloom.hlsl",
+        "entryPoint": "CSMain",
+        "description": "Bloom composite — intensity driven by bloomIntensity input, threshold by taaEnabled selector"
+      },
+      {
+        "id": "sh-debug-cs",
+        "name": "DebugVisualizer",
+        "stage": "compute",
+        "path": "shaders/debug/visualizer.hlsl",
+        "entryPoint": "CSMain",
+        "description": "G-Buffer debug overlay — channel index directly driven by debugChannel input"
+      },
+      {
+        "id": "sh-composite-cs",
+        "name": "OutputComposite",
+        "stage": "compute",
+        "path": "shaders/post/composite.hlsl",
+        "entryPoint": "CSMain",
+        "description": "Final composite — source buffer selected at runtime between rt-tonemap and rt-debug via data selector"
+      },
+      {
+        "id": "sh-particle-sim-cs",
+        "name": "ParticleSimulation",
+        "stage": "compute",
+        "path": "shaders/particles/simulate.hlsl",
+        "entryPoint": "CSMain",
+        "description": "GPU particle simulation on async compute — integrates velocity and manages lifetime"
+      },
+      {
+        "id": "sh-cull-cs",
+        "name": "GPUCulling",
+        "stage": "compute",
+        "path": "shaders/culling/cull.hlsl",
+        "entryPoint": "CSMain",
+        "description": "Tile-based light culling — reads depth HZB, writes indirect args and per-tile light index list"
+      }
+    ],
+    "inputParameters": [
+      {
+        "id": "ip-1",
+        "name": "enableAO",
+        "type": "bool",
+        "defaultValue": "true",
+        "description": "Enables screen-space ambient occlusion. Controls pass-ao condition and aoStrength data selector in lighting."
+      },
+      {
+        "id": "ip-2",
+        "name": "aoQuality",
+        "type": "uint",
+        "defaultValue": "1",
+        "description": "AO algorithm: 0 = SSAO (fast), 1 = HBAO+ (high quality). Drives the SSAO/HBAO+ variant selector and radius data selectors."
+      },
+      {
+        "id": "ip-3",
+        "name": "enableShadows",
+        "type": "bool",
+        "defaultValue": "true",
+        "description": "Enables cascaded shadow maps. Controls pass-shadow condition and shadowStrength data selector in lighting."
+      },
+      {
+        "id": "ip-4",
+        "name": "enableBloom",
+        "type": "bool",
+        "defaultValue": "true",
+        "description": "Enables bloom post-process. Controls pass-bloom-prep condition and the nested bloom if-block."
+      },
+      {
+        "id": "ip-5",
+        "name": "bloomIntensity",
+        "type": "float",
+        "defaultValue": "0.5",
+        "description": "Bloom contribution strength [0..1]. Directly bound to the bloom composite shader via an input data selector."
+      },
+      {
+        "id": "ip-6",
+        "name": "enableDebugViz",
+        "type": "bool",
+        "defaultValue": "false",
+        "description": "Replaces final output with a G-Buffer debug overlay. Controls the top-level post-process if-block and the output composite source selector."
+      },
+      {
+        "id": "ip-7",
+        "name": "debugChannel",
+        "type": "uint",
+        "defaultValue": "0",
+        "description": "Debug channel to visualize: 0=albedo, 1=normals, 2=depth, 3=AO, 4=lighting. Directly bound to the debug shader via an input data selector."
+      },
+      {
+        "id": "ip-8",
+        "name": "exposureValue",
+        "type": "float",
+        "defaultValue": "1.0",
+        "description": "Scene exposure (EV). Bound to both the lighting and tonemap shaders via input data selectors."
+      },
+      {
+        "id": "ip-9",
+        "name": "enableParticles",
+        "type": "bool",
+        "defaultValue": "true",
+        "description": "Enables GPU particle simulation on the async compute queue. Controls pass-particles condition."
+      },
+      {
+        "id": "ip-10",
+        "name": "taaEnabled",
+        "type": "bool",
+        "defaultValue": "true",
+        "description": "Enables temporal anti-aliasing. Drives the vignette strength (tonemap) and bloom threshold via select data selectors."
+      },
+      {
+        "id": "ip-11",
+        "name": "enableReflections",
+        "type": "bool",
+        "defaultValue": "false",
+        "description": "Enables hardware ray-traced reflections. Controls pass-reflections condition and reflectionStrength data selector in lighting."
+      },
+      {
+        "id": "ip-12",
+        "name": "reflectionQuality",
+        "type": "uint",
+        "defaultValue": "0",
+        "description": "Reflection quality: 0 = 1 bounce / low roughness, 1 = 3 bounces / rough surfaces. Drives maxBounces and roughnessCutoff data selectors."
+      }
+    ]
+  }
+}

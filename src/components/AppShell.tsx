@@ -282,8 +282,8 @@ function StatusBar({
     validationOpen: boolean;
     onOpenStats: () => void;
 }) {
-    const { pipeline, resources } = useStore();
-    const issues = useMemo(() => validateDocument(pipeline, resources), [pipeline, resources]);
+    const { pipeline, resources, inputDefinitions } = useStore();
+    const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions), [pipeline, resources, inputDefinitions]);
     const errors = issues.filter((i) => i.severity === "error");
     const warnings = issues.filter((i) => i.severity === "warning");
     const vram = useMemo(
@@ -352,8 +352,8 @@ function StatusBar({
 // ─── Validation popover ───────────────────────────────────────────────────────
 
 function ValidationPopover({ onClose }: { onClose: () => void }) {
-    const { pipeline, resources } = useStore();
-    const issues = useMemo(() => validateDocument(pipeline, resources), [pipeline, resources]);
+    const { pipeline, resources, inputDefinitions } = useStore();
+    const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions), [pipeline, resources, inputDefinitions]);
     const errors = issues.filter((i) => i.severity === "error");
     const warnings = issues.filter((i) => i.severity === "warning");
     const ref = useRef<HTMLDivElement>(null);

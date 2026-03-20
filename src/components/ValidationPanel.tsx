@@ -3,8 +3,8 @@ import { useStore } from '../state/store';
 import { validateDocument } from '../validation';
 
 export function ValidationPanel() {
-  const { pipeline, resources } = useStore();
-  const issues = useMemo(() => validateDocument(pipeline, resources), [pipeline, resources]);
+  const { pipeline, resources, inputDefinitions } = useStore();
+  const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions), [pipeline, resources, inputDefinitions]);
 
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { newId } from "../utils/id";
 import { rgDocument } from "../data/seed";
+import rawRg from "../assets/rg.json";
 import { fetchShaderDescriptor } from "../utils/shaderApi";
 import type {
     Pipeline,
@@ -299,100 +300,48 @@ export interface AppState {
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
-// ─── Seed input definitions (AO example) ─────────────────────────────────────
+// ─── Seed input definitions (from rg.json inputDescriptor) ───────────────────
 
-const defaultInputDefinitions: InputDefinition[] = [
-    {
-        id: "enable_ao",
-        label: "Enable AO",
-        description: "Toggle ambient occlusion",
-        kind: "bool",
-        defaultValue: true,
-        categoryPath: ["Post Processing", "Ambient Occlusion"],
-        userFacing: true,
-        order: 0,
-    },
-    {
-        id: "ao_technique",
-        label: "AO Technique",
-        description: "Algorithm used for AO computation",
-        kind: "enum",
-        defaultValue: "ssao",
-        categoryPath: ["Post Processing", "Ambient Occlusion"],
-        userFacing: true,
-        order: 1,
-        enumOptions: [
-            { value: "ssao", label: "SSAO" },
-            { value: "hbao", label: "HBAO" },
-            { value: "gtao", label: "GTAO" },
-        ],
-        visibilityCondition: {
-            type: "comparison",
-            leftInput: "enable_ao",
-            operator: "==",
-            rightValue: true,
-        },
-    },
-    {
-        id: "ao_radius",
-        label: "AO Radius",
-        description: "World-space radius of occlusion sampling",
-        kind: "float",
-        defaultValue: 0.5,
-        categoryPath: ["Post Processing", "Ambient Occlusion"],
-        userFacing: true,
-        order: 2,
-        min: 0.01,
-        max: 5.0,
-        step: 0.01,
-        visibilityCondition: {
-            type: "comparison",
-            leftInput: "enable_ao",
-            operator: "==",
-            rightValue: true,
-        },
-    },
-    {
-        id: "ao_sample_count",
-        label: "Sample Count",
-        description: "Number of AO samples per pixel",
-        kind: "int",
-        defaultValue: 16,
-        categoryPath: ["Post Processing", "Ambient Occlusion"],
-        advanced: true,
-        order: 3,
-        min: 4,
-        max: 64,
-        step: 4,
-        visibilityCondition: {
-            type: "and",
-            conditions: [
-                { type: "comparison", leftInput: "enable_ao", operator: "==", rightValue: true },
-                { type: "comparison", leftInput: "ao_technique", operator: "==", rightValue: "ssao" },
-            ],
-        },
-    },
-    {
-        id: "ao_ray_length",
-        label: "Ray Length",
-        description: "Maximum ray length for HBAO",
-        kind: "float",
-        defaultValue: 1.0,
-        categoryPath: ["Post Processing", "Ambient Occlusion"],
-        advanced: true,
-        order: 4,
-        min: 0.1,
-        max: 10.0,
-        step: 0.1,
-        visibilityCondition: {
-            type: "and",
-            conditions: [
-                { type: "comparison", leftInput: "enable_ao", operator: "==", rightValue: true },
-                { type: "comparison", leftInput: "ao_technique", operator: "==", rightValue: "hbao" },
-            ],
-        },
-    },
-];
+type RgInputEntry = {
+    name: string;
+    type: string;
+    nativeType: string;
+    default: unknown;
+    description?: string;
+    categories: string[];
+    id?: number;
+    properties?: { isHidden?: boolean; isMandatory?: boolean };
+};
+
+function rgTypeToKind(type: string): InputDefinition["kind"] {
+    switch (type) {
+        case "bool": return "bool";
+        case "float": return "float";
+        case "uint": return "int";
+        case "color": return "color";
+        case "vec3": return "vec3";
+        default: return "float";
+    }
+}
+
+function camelToLabel(name: string): string {
+    return name
+        .replace(/([A-Z])/g, " $1")
+        .replace(/^./, (s) => s.toUpperCase())
+        .trim();
+}
+
+const defaultInputDefinitions: InputDefinition[] = (
+    (rawRg as { inputDescriptor: RgInputEntry[] }).inputDescriptor
+).map((entry) => ({
+    id: entry.name,
+    label: camelToLabel(entry.name),
+    description: entry.description,
+    kind: rgTypeToKind(entry.type),
+    defaultValue: entry.default,
+    categoryPath: entry.categories,
+    advanced: false,
+}));
 
 function firstPassId(pipeline: Pipeline): PassId | null {
     for (const tl of pipeline.timelines) {

@@ -21,7 +21,6 @@ function makeDefaultDefinition(categoryPath: string[]): Omit<InputDefinition, "i
         kind: "bool" as InputKind,
         defaultValue: false,
         categoryPath,
-        userFacing: true,
         advanced: false,
     };
 }

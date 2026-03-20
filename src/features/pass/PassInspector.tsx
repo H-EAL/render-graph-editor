@@ -167,9 +167,9 @@ export function PassInspector() {
                                 <div className="flex flex-wrap gap-1">
                                     {derivedResources.reads.map((rid) => {
                                         const name =
-                                            resources.renderTargets.find((r) => r.id === rid)
-                                                ?.name ??
+                                            resources.renderTargets.find((r) => r.id === rid)?.name ??
                                             resources.buffers.find((b) => b.id === rid)?.name ??
+                                            resources.inputParameters.find((p) => p.id === rid)?.name ??
                                             rid;
                                         return (
                                             <span
@@ -193,9 +193,9 @@ export function PassInspector() {
                                 <div className="flex flex-wrap gap-1">
                                     {derivedResources.writes.map((rid) => {
                                         const name =
-                                            resources.renderTargets.find((r) => r.id === rid)
-                                                ?.name ??
+                                            resources.renderTargets.find((r) => r.id === rid)?.name ??
                                             resources.buffers.find((b) => b.id === rid)?.name ??
+                                            resources.inputParameters.find((p) => p.id === rid)?.name ??
                                             rid;
                                         return (
                                             <span

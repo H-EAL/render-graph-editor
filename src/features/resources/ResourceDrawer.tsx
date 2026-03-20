@@ -3,6 +3,7 @@ import { useStore } from "../../state/store";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { getResourceUsage } from "../../utils/dependencyGraph";
+import { buildInputPassUsage } from "../../utils/inputCondition";
 import type { TextureFormat, ShaderStage, InputParamType, BlendFactor, BlendOp } from "../../types";
 
 // ─── Option lists ─────────────────────────────────────────────────────────────
@@ -125,7 +126,15 @@ export function ResourceDrawer() {
     const usageMap = useMemo(() => getResourceUsage(pipeline), [pipeline]);
     const usage = rid ? usageMap.get(rid) : undefined;
     const isDead = !!usage && usage.writers.length > 0 && usage.readers.length === 0;
-    const isUnused = !usage || (usage.writers.length === 0 && usage.readers.length === 0);
+
+    // For input parameters, compute usage via conditions + shader bindings
+    const paramUsage = useMemo(
+        () => (param ? buildInputPassUsage(param.name, pipeline, resources) : []),
+        [param, pipeline, resources],
+    );
+    const isUnused = param
+        ? paramUsage.length === 0
+        : !usage || (usage.writers.length === 0 && usage.readers.length === 0);
 
     const resourceType = rt
         ? "Render Target"
@@ -491,7 +500,35 @@ export function ResourceDrawer() {
                 )}
 
                 {/* ── Usage ── */}
-                {usage && (usage.writers.length > 0 || usage.readers.length > 0) && (
+                {param && paramUsage.length > 0 && (
+                    <>
+                        <Section label="Usage" />
+                        <div className="flex flex-col gap-1">
+                            {paramUsage.map((p) => (
+                                <div key={p.id} className="flex items-center gap-2 text-[10px]">
+                                    <button
+                                        className="text-zinc-300 hover:text-white hover:underline text-left flex-1 truncate"
+                                        onClick={() => selectPass(p.id)}
+                                        title={`Jump to pass: ${p.name}`}
+                                    >
+                                        {p.name}
+                                    </button>
+                                    {(p.kind === "condition" || p.kind === "both") && (
+                                        <span className="shrink-0 text-[9px] font-mono px-1 py-0.5 rounded bg-violet-900/40 border border-violet-700/40 text-violet-300">
+                                            cond
+                                        </span>
+                                    )}
+                                    {(p.kind === "data" || p.kind === "both") && (
+                                        <span className="shrink-0 text-[9px] font-mono px-1 py-0.5 rounded bg-sky-900/40 border border-sky-700/40 text-sky-300">
+                                            data
+                                        </span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </>
+                )}
+                {!param && usage && (usage.writers.length > 0 || usage.readers.length > 0) && (
                     <>
                         <Section label="Usage" />
                         {isDead && (

@@ -458,7 +458,6 @@ export interface InputDefinition {
     visibilityCondition?: InputCondition;
     enabledCondition?: InputCondition;
     advanced?: boolean;
-    userFacing?: boolean;
     min?: number;
     max?: number;
     step?: number;

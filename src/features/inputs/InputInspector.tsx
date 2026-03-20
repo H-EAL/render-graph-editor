@@ -8,7 +8,8 @@
 import { useState } from "react";
 import type { InputDefinition, InputId, InputKind, InputCondition } from "../../types";
 import { ConditionBuilder } from "./ConditionBuilder";
-import { buildDependsOn, buildUsedBy } from "../../utils/inputCondition";
+import { buildDependsOn, buildUsedBy, buildInputPassUsage } from "../../utils/inputCondition";
+import { useStore } from "../../state/store";
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
@@ -276,14 +277,29 @@ function DependencyInfo({
     defId: InputId;
     definitions: InputDefinition[];
 }) {
+    const pipeline = useStore((s) => s.pipeline);
+    const resources = useStore((s) => s.resources);
     const dependsOn = buildDependsOn(definitions).get(defId) ?? new Set<InputId>();
     const usedBy = buildUsedBy(definitions).get(defId) ?? new Set<InputId>();
+    const usedInPasses = buildInputPassUsage(defId, pipeline, resources);
     const labelOf = (id: InputId) => definitions.find((d) => d.id === id)?.label ?? id;
 
-    if (dependsOn.size === 0 && usedBy.size === 0) return null;
+    if (dependsOn.size === 0 && usedBy.size === 0 && usedInPasses.length === 0) return null;
 
     return (
-        <div className="flex flex-col gap-1 text-[10px]">
+        <div className="flex flex-col gap-1.5 text-[10px]">
+            {usedInPasses.length > 0 && (
+                <div className="flex items-start gap-2">
+                    <span className="text-zinc-500 shrink-0">Passes:</span>
+                    <span className="text-zinc-300 flex flex-wrap gap-1">
+                        {usedInPasses.map((p) => (
+                            <span key={p.id} className="bg-blue-900/30 border border-blue-800/40 rounded px-1.5 py-0.5 text-[9px] text-blue-300">
+                                {p.name}
+                            </span>
+                        ))}
+                    </span>
+                </div>
+            )}
             {dependsOn.size > 0 && (
                 <div className="flex items-start gap-2">
                     <span className="text-zinc-500 shrink-0">Depends on:</span>
@@ -469,25 +485,16 @@ export function InputInspector({ definition: def, definitions, onChange }: Input
                 {/* ── Flags ────────────────────────────────────────────────── */}
                 <div className={SECTION}>
                     <div className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest mb-2">Flags</div>
-                    <div className="flex flex-col gap-1.5">
-                        {(
-                            [
-                                ["userFacing", "User-facing", "Shown in the end-user form"],
-                                ["advanced", "Advanced", "Hidden by default in the form"],
-                            ] as const
-                        ).map(([key, label, tip]) => (
-                            <label key={key} className="flex items-center gap-2 cursor-pointer" title={tip}>
-                                <input
-                                    type="checkbox"
-                                    checked={!!def[key]}
-                                    onChange={(e) => u({ [key]: e.target.checked })}
-                                    className="rounded accent-blue-500"
-                                />
-                                <span className="text-[11px] text-zinc-300">{label}</span>
-                                <span className="text-[10px] text-zinc-600">{tip}</span>
-                            </label>
-                        ))}
-                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer" title="Hidden by default in the form">
+                        <input
+                            type="checkbox"
+                            checked={!!def.advanced}
+                            onChange={(e) => u({ advanced: e.target.checked })}
+                            className="rounded accent-blue-500"
+                        />
+                        <span className="text-[11px] text-zinc-300">Advanced</span>
+                        <span className="text-[10px] text-zinc-600">Hidden by default in the form</span>
+                    </label>
                 </div>
 
                 {/* ── Conditions ───────────────────────────────────────────── */}
@@ -513,13 +520,6 @@ export function InputInspector({ definition: def, definitions, onChange }: Input
                 <div className="pb-3">
                     <div className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest mb-2">Dependencies</div>
                     <DependencyInfo defId={def.id} definitions={definitions} />
-                    {(() => {
-                        const dependsOn = buildDependsOn(definitions).get(def.id) ?? new Set();
-                        const usedBy = buildUsedBy(definitions).get(def.id) ?? new Set();
-                        if (dependsOn.size === 0 && usedBy.size === 0)
-                            return <div className="text-[10px] text-zinc-600 italic">No dependencies.</div>;
-                        return null;
-                    })()}
                 </div>
 
             </div>

@@ -1,9 +1,11 @@
 import type { PipelineDocument } from "../types";
 import rawSeed from "../assets/newrg.json";
 import rawRg from "../assets/rg.json";
+import rawShowcase from "../assets/showcase.json";
 import { importRgJson } from "../utils/importRg";
 
 export const seedDocument: PipelineDocument = rawSeed as unknown as PipelineDocument;
+export const showcaseDocument: PipelineDocument = rawShowcase as unknown as PipelineDocument;
 
 // Pre-converted native rg.json bundled as an example
 export const rgDocument: PipelineDocument = importRgJson(rawRg);
@@ -518,6 +520,7 @@ export const emptyDocument: PipelineDocument = {
 
 export const examples = [
     { id: "empty", label: "Empty", doc: emptyDocument },
+    { id: "showcase", label: "Showcase", doc: showcaseDocument },
     { id: "newrg", label: "newrg", doc: seedDocument },
     { id: "rg", label: "rg.json", doc: rgDocument },
     { id: "deferred", label: "Deferred", doc: deferredSeed },

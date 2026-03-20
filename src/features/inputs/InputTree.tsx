@@ -84,7 +84,6 @@ function filterTree(
         if (filterFlag === "conditional" && !def.visibilityCondition && !def.enabledCondition)
             return false;
         if (filterFlag === "advanced" && !def.advanced) return false;
-        if (filterFlag === "userFacing" && !def.userFacing) return false;
         return true;
     }
 
@@ -236,11 +235,6 @@ function InputRow({
                 {def.advanced && (
                     <span className="text-[8px] rounded px-1 py-0 border bg-zinc-800 text-zinc-600 border-zinc-700/40" title="Advanced">
                         adv
-                    </span>
-                )}
-                {def.userFacing && (
-                    <span className="text-[8px] rounded px-1 py-0 border bg-zinc-800 text-zinc-500 border-zinc-700/40" title="User-facing">
-                        usr
                     </span>
                 )}
             </div>
@@ -512,7 +506,6 @@ export function InputTree({
                         <option value="">All flags</option>
                         <option value="conditional">Conditional</option>
                         <option value="advanced">Advanced</option>
-                        <option value="userFacing">User-facing</option>
                     </select>
                 </div>
             </div>
