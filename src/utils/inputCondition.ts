@@ -1,5 +1,5 @@
-import type { InputCondition, InputDefinition, InputId, Pipeline, ResourceLibrary } from "../types";
-import { inferPassResources } from "./inferStepResources";
+import type { InputCondition, InputDefinition, InputId, Pipeline, ResourceLibrary, Step } from "../types";
+import { inferPassResources, collectStepInputParamRefs } from "./inferStepResources";
 
 // ─── Evaluation ───────────────────────────────────────────────────────────────
 
@@ -112,13 +112,30 @@ export function buildInputPassUsage(
 
     const result: Array<{ id: string; name: string; kind: "condition" | "data" | "both" }> = [];
     for (const pass of Object.values(pipeline.passes)) {
-        // Condition reference (pass-level conditions already aggregate all node conditions)
-        const usedInCondition = pass.conditions.some(conditionMatch);
+        // Pass-level condition reference
+        const usedInPassCondition = pass.conditions.some(conditionMatch);
+
+        // Step-level condition/data references (ifBlock, enableIf, fieldSelectors)
+        const allStepIds = [
+            ...pass.steps,
+            ...(pass.disabledSteps ?? []),
+            ...(pass.variants ?? []).flatMap((v) => v.activeSteps),
+        ];
+        const stepRefs = collectStepInputParamRefs(allStepIds, pipeline.steps as Record<string, Step>);
+        const usedInStepCondition = stepRefs.conditionRefs.some(
+            (ref) => ref === inputId || ref === ipId,
+        );
+        const usedInStepData = !!ipId && stepRefs.dataRefs.some(
+            (ref) => ref === inputId || ref === ipId,
+        );
+
+        const usedInCondition = usedInPassCondition || usedInStepCondition;
 
         // Shader binding reference — delegate to inferPassResources which handles all
         // step types (raster cmd.shaderBindings, compute step.shaderBindings, materialInputs…)
         const usedInBindings =
-            !!ipId && inferPassResources(pass, pipeline.steps).reads.includes(ipId);
+            (!!ipId && inferPassResources(pass, pipeline.steps as Record<string, Step>).reads.includes(ipId))
+            || usedInStepData;
 
         if (usedInCondition || usedInBindings) {
             const kind =

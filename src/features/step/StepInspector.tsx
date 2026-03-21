@@ -479,12 +479,6 @@ export function StepInspector() {
                 </FieldRow>
             </InspectorSection>
 
-            <InspectorSection
-                title={step.type === "raster" ? "Attachments" : `${step.type} Settings`}
-            >
-                <StepTypeEditor step={step} />
-            </InspectorSection>
-
             <InspectorSection title="Conditions">
                 {(() => {
                     const inferred = inferStepConditions(step.id, pipeline);
@@ -511,6 +505,12 @@ export function StepInspector() {
                         </div>
                     );
                 })()}
+            </InspectorSection>
+
+            <InspectorSection
+                title={step.type === "raster" ? "Attachments" : `${step.type} Settings`}
+            >
+                <StepTypeEditor step={step} />
             </InspectorSection>
         </div>
     );

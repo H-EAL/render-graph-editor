@@ -42,6 +42,19 @@ const STEP_TYPES: { type: StepType; label: string }[] = [
 /** Types allowed inside branches (no nested flow-control blocks). */
 const BRANCH_STEP_TYPES = STEP_TYPES.filter((t) => t.type !== 'ifBlock' && t.type !== 'enableIf');
 
+/** Unique select-condition names from a step's fieldSelectors. */
+function getSelectConditions(step: { fieldSelectors?: Record<string, { kind: string; condition?: string }> }): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const vs of Object.values(step.fieldSelectors ?? {})) {
+    if (vs.kind === 'select' && vs.condition && !seen.has(vs.condition)) {
+      seen.add(vs.condition);
+      result.push(vs.condition);
+    }
+  }
+  return result;
+}
+
 const CONTAINER_ACTIVE   = 'active';
 const CONTAINER_VARIANT  = 'variant';
 const CONTAINER_FALLBACK = 'fallback';
@@ -139,6 +152,7 @@ function IfBranchList({ passId, ifBlockId, branch, color, label }: IfBranchListP
           {stepIds.map((sid) => {
             const step = pipeline.steps[sid];
             if (!step) return null;
+            if (step.type === 'raster') return <RasterStepBlock key={sid} passId={passId} stepId={sid} />;
             return (
               <BranchStepRow
                 key={sid}
@@ -184,12 +198,16 @@ interface BranchStepRowProps {
   onDelete: () => void;
 }
 
+
 function BranchStepRow({ passId: _passId, stepId, isSelected, onSelect, onDelete }: BranchStepRowProps) {
   const { pipeline } = useStore();
   const step = pipeline.steps[stepId];
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stepId });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
   if (!step) return null;
+
+  const selectConds = getSelectConditions(step as Parameters<typeof getSelectConditions>[0]);
+
   return (
     <div ref={setNodeRef} style={style} onClick={onSelect}
       className={`group flex items-center gap-1.5 pl-5 pr-3 py-1.5 cursor-pointer border-b border-zinc-800/40 hover:bg-zinc-800/30 select-none
@@ -197,6 +215,9 @@ function BranchStepRow({ passId: _passId, stepId, isSelected, onSelect, onDelete
       <button {...attributes} {...listeners} className="text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>⠿</button>
       <Badge value={step.type} />
       <span className="flex-1 text-xs text-zinc-300 truncate">{step.name}</span>
+      {selectConds.map((c) => (
+        <span key={c} className="text-[9px] font-mono bg-violet-900/30 text-violet-300 border border-violet-700/40 rounded px-1 py-0.5 shrink-0 max-w-16 truncate" title={c}>{c}</span>
+      ))}
       <div className="hidden group-hover:flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
         <button onClick={onDelete} title="Delete" className="p-0.5 text-zinc-500 hover:text-red-400 rounded text-xs">✕</button>
       </div>
@@ -340,6 +361,8 @@ function StepRow({ passId: _passId, stepId, onDelete, onDuplicate }: StepRowProp
 
   if (!step) return null;
 
+  const selectConds = getSelectConditions(step as Parameters<typeof getSelectConditions>[0]);
+
   return (
     <div ref={setNodeRef} style={style} onClick={() => selectStep(isSelected ? null : stepId)}
       className={`group flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-zinc-800/50 hover:bg-zinc-800/40 select-none
@@ -347,6 +370,9 @@ function StepRow({ passId: _passId, stepId, onDelete, onDuplicate }: StepRowProp
       <button {...attributes} {...listeners} className="text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>⠿</button>
       <Badge value={step.type} />
       <span className="flex-1 text-sm text-zinc-200 truncate">{step.name}</span>
+      {selectConds.map((c) => (
+        <span key={c} className="text-[9px] font-mono bg-violet-900/30 text-violet-300 border border-violet-700/40 rounded px-1 py-0.5 shrink-0 max-w-16 truncate" title={c}>{c}</span>
+      ))}
       <div className="hidden group-hover:flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
         <button onClick={onDuplicate} title="Duplicate" className="p-1 text-zinc-500 hover:text-zinc-200 rounded">⧉</button>
         <button onClick={onDelete}    title="Delete"    className="p-1 text-zinc-500 hover:text-red-400 rounded">✕</button>

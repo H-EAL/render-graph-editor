@@ -147,6 +147,9 @@ export function RasterStepBlock({ passId, stepId }: RasterStepBlockProps) {
 
   const isStepSelected = selectedStepId === stepId;
 
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stepId });
+  const sortableStyle = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -177,13 +180,16 @@ export function RasterStepBlock({ passId, stepId }: RasterStepBlockProps) {
   const hasDepth   = !!step.attachments.depthAttachment;
 
   return (
-    <div className={`border-b border-zinc-800/50 ${isStepSelected ? 'border-l-2 border-l-blue-500' : 'border-l-2 border-l-transparent'}`}>
+    <div ref={setNodeRef} style={sortableStyle} className={`border-b border-zinc-800/50 ${isStepSelected ? 'border-l-2 border-l-blue-500' : 'border-l-2 border-l-transparent'}`}>
       {/* ── Header ── */}
       <div
         onClick={handleHeaderClick}
         className={`group flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-zinc-800/40 select-none
           ${isStepSelected && !selectedCommandId ? 'bg-blue-900/25' : ''}`}
       >
+        {/* drag handle */}
+        <button {...attributes} {...listeners} className="text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>⠿</button>
+
         {/* expand toggle */}
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}

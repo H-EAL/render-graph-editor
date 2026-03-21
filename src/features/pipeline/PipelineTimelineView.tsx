@@ -22,8 +22,8 @@ import {
     getResourceUsage,
     type DependencyEdge,
 } from "../../utils/dependencyGraph";
-import { derivePassAccess, type AccessKind } from "../../utils/resourceOverlay";
-import { inferPassResources } from "../../utils/inferStepResources";
+import { type AccessKind } from "../../utils/resourceOverlay";
+import { inferPassResources, collectStepInputParamRefs } from "../../utils/inferStepResources";
 import { newId } from "../../utils/id";
 import { fmtRTSize } from "../resources/ResourceDrawer";
 import type { PassId, Pipeline, ResourceId, Step, TimelineId, TimelineType } from "../../types";
@@ -432,6 +432,15 @@ export function PipelineTimelineView() {
     const [mergeModal, setMergeModal] = useState<{ passAId: PassId; passBId: PassId } | null>(null);
     const [mergeModalName, setMergeModalName] = useState("");
     const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
+    // Controller panel: condition name → explicit boolean (undefined = unset/both)
+    const [controllerValues, setControllerValues] = useState<Map<string, boolean>>(new Map());
+    const [showControllers, setShowControllers] = useState(false);
+    const setController = (name: string, val: boolean | undefined) =>
+        setControllerValues((prev) => {
+            const next = new Map(prev);
+            if (val === undefined) next.delete(name); else next.set(name, val);
+            return next;
+        });
     // ── Merge mode ─────────────────────────────────────────────────────────
     const [mergeMode, setMergeMode] = useState(false);
     const [mergeSelection, setMergeSelection] = useState<Set<PassId>>(new Set());
@@ -681,16 +690,64 @@ export function PipelineTimelineView() {
         [resources],
     );
 
-    // Inferred reads for every pass (covers shader bindings, materialInputs, attachments).
-    // Computed once here and reused by both usedParamIds and allAccessMaps.
-    const passInferredReads = useMemo(() => {
-        const map = new Map<PassId, Set<ResourceId>>();
+    // Evaluate a pass's conditions against controllerValues.
+    // Returns "active" if all defined conditions are true, "fallback" if any is false, null if any is unset.
+    const getPassMode = useCallback((conditions: string[]): "active" | "fallback" | null => {
+        if (conditions.length === 0) return null;
+        let allDefined = true;
+        for (const c of conditions) {
+            const neg = c.startsWith("!");
+            const name = neg ? c.slice(1) : c;
+            const val = controllerValues.get(name);
+            if (val === undefined) { allDefined = false; continue; }
+            if ((neg ? !val : val) === false) return "fallback";
+        }
+        return allDefined ? "active" : null;
+    }, [controllerValues]);
+
+    // Per-pass step input-param refs (condition names + data binding refs from ifBlock/enableIf/fieldSelectors)
+    const passStepInputRefs = useMemo(() => {
+        const map = new Map<PassId, ReturnType<typeof collectStepInputParamRefs>>();
         for (const pass of Object.values(pipeline.passes)) {
-            const { reads } = inferPassResources(pass, pipeline.steps as Record<string, Step>);
-            map.set(pass.id, new Set(reads));
+            const allStepIds = [
+                ...pass.steps,
+                ...(pass.disabledSteps ?? []),
+                ...(pass.variants ?? []).flatMap((v) => v.activeSteps),
+            ];
+            map.set(pass.id, collectStepInputParamRefs(allStepIds, pipeline.steps as Record<string, Step>));
         }
         return map;
-    }, [pipeline]);
+    }, [pipeline.passes, pipeline.steps]);
+
+    // All InputParameters used as conditions anywhere in the pipeline (pass-level + step-level)
+    const controllers = useMemo(() => {
+        const condNames = new Set<string>();
+        for (const pass of Object.values(pipeline.passes)) {
+            for (const c of pass.conditions)
+                condNames.add(c.startsWith("!") ? c.slice(1) : c);
+            // Step-level: ifBlock/enableIf conditions and select conditions in fieldSelectors
+            for (const c of (passStepInputRefs.get(pass.id)?.conditionRefs ?? []))
+                condNames.add(c);
+        }
+        return resources.inputParameters.filter((p) => condNames.has(p.name));
+    }, [pipeline.passes, passStepInputRefs, resources.inputParameters]);
+
+    // Inferred reads+writes for every pass, respecting controller values.
+    const passInferredResources = useMemo(() => {
+        const map = new Map<PassId, { reads: Set<ResourceId>; writes: Set<ResourceId> }>();
+        for (const pass of Object.values(pipeline.passes)) {
+            const mode = getPassMode(pass.conditions) ?? undefined;
+            const { reads, writes } = inferPassResources(pass, pipeline.steps as Record<string, Step>, mode);
+            map.set(pass.id, { reads: new Set(reads), writes: new Set(writes) });
+        }
+        return map;
+    }, [pipeline, getPassMode]);
+
+    // Backwards-compat alias used by paramKindMap (reads only)
+    const passInferredReads = useMemo(
+        () => new Map([...passInferredResources].map(([pid, { reads }]) => [pid, reads])),
+        [passInferredResources],
+    );
 
     // For input params: per-resource, per-pass kind ("condition" | "data" | "both")
     const paramKindMap = useMemo(() => {
@@ -698,12 +755,20 @@ export function PipelineTimelineView() {
         const result = new Map<ResourceId, Map<PassId, "condition" | "data" | "both">>();
         for (const p of resources.inputParameters) result.set(p.id, new Map());
         for (const pass of Object.values(pipeline.passes)) {
+            const stepRefs = passStepInputRefs.get(pass.id);
             for (const p of resources.inputParameters) {
-                const inCond = pass.conditions.some((c) => {
+                const inPassCond = pass.conditions.some((c) => {
                     const name = c.startsWith("!") ? c.slice(1) : c;
                     return paramByName.get(name) === p.id;
                 });
-                const inData = passInferredReads.get(pass.id)?.has(p.id) ?? false;
+                const inStepCond = stepRefs?.conditionRefs.some(
+                    (ref) => paramByName.get(ref) === p.id || ref === p.id,
+                ) ?? false;
+                const inCond = inPassCond || inStepCond;
+                const inStepData = stepRefs?.dataRefs.some(
+                    (ref) => ref === p.id || paramByName.get(ref) === p.id,
+                ) ?? false;
+                const inData = (passInferredReads.get(pass.id)?.has(p.id) ?? false) || inStepData;
                 if (inCond || inData) {
                     const kind = inCond && inData ? "both" : inCond ? "condition" : "data";
                     result.get(p.id)!.set(pass.id, kind);
@@ -711,7 +776,7 @@ export function PipelineTimelineView() {
             }
         }
         return result;
-    }, [resources.inputParameters, pipeline.passes, passInferredReads]);
+    }, [resources.inputParameters, pipeline.passes, passInferredReads, passStepInputRefs]);
 
     // Overlay rows: ordered by resourceOrder, filtered to existing IDs
     const validResIds = useMemo(
@@ -777,14 +842,20 @@ export function PipelineTimelineView() {
                     // Input params: "read" if any pass references them via conditions or shader bindings
                     const map = new Map<PassId, AccessKind>();
                     for (const pass of Object.values(pipeline.passes)) {
-                        // Condition reference
-                        const inCond = pass.conditions.some((c) => {
+                        const stepRefs = passStepInputRefs.get(pass.id);
+                        // Pass-level condition reference
+                        const inPassCond = pass.conditions.some((c) => {
                             const name = c.startsWith("!") ? c.slice(1) : c;
                             return paramByName.get(name) === rid;
                         });
+                        // Step-level condition or data reference
+                        const inStepRef = (
+                            stepRefs?.conditionRefs.some((ref) => paramByName.get(ref) === rid || ref === rid) ||
+                            stepRefs?.dataRefs.some((ref) => ref === rid || paramByName.get(ref) === rid)
+                        ) ?? false;
                         // Shader binding reference (via precomputed inferred reads)
                         const inBindings = passInferredReads.get(pass.id)?.has(rid) ?? false;
-                        if (inCond || inBindings) map.set(pass.id, "read");
+                        if (inPassCond || inStepRef || inBindings) map.set(pass.id, "read");
                     }
                     return [rid, map] as const;
                 }
@@ -795,10 +866,18 @@ export function PipelineTimelineView() {
                     for (const { passId } of usage?.readers ?? []) map.set(passId, "read");
                     return [rid, map] as const;
                 }
-                return [rid, derivePassAccess(rid, pipeline)] as const;
+                // RT / buffer: derive from precomputed per-pass resources (respects fallback toggle)
+                const map = new Map<PassId, AccessKind>();
+                for (const [passId, { reads, writes }] of passInferredResources) {
+                    const r = reads.has(rid), w = writes.has(rid);
+                    if (r && w) map.set(passId, "readwrite");
+                    else if (r) map.set(passId, "read");
+                    else if (w) map.set(passId, "write");
+                }
+                return [rid, map] as const;
             }),
         );
-    }, [overlayRows, pipeline, resources.inputParameters, resources.blendStates, passInferredReads, usageMapEarly]);
+    }, [overlayRows, pipeline, resources.inputParameters, resources.blendStates, passInferredReads, passInferredResources, passStepInputRefs, usageMapEarly]);
 
     // Focused layout: per-timeline linear layout, compressing non-relevant passes into ellipsis nodes
     type EllipsisNode = { count: number; x: number; y: number };
@@ -905,16 +984,25 @@ export function PipelineTimelineView() {
         }
         return dead;
     }, [usageMap, rtMap]);
-    // Input parameters referenced by any pass condition (by name)
+    // Input parameters referenced by any pass condition or step condition (by name)
     const usedParamIds = useMemo(() => {
         const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
         const paramIdSet = new Set(resources.inputParameters.map((p) => p.id));
         const used = new Set<ResourceId>();
         for (const pass of Object.values(pipeline.passes)) {
+            // Pass-level conditions
             for (const cond of pass.conditions) {
                 const name = cond.startsWith("!") ? cond.slice(1) : cond;
                 const pid = paramByName.get(name);
                 if (pid) used.add(pid);
+            }
+            // Step-level conditions (ifBlock/enableIf/select)
+            const stepRefs = passStepInputRefs.get(pass.id);
+            if (stepRefs) {
+                for (const ref of [...stepRefs.conditionRefs, ...stepRefs.dataRefs]) {
+                    const pid = paramByName.get(ref) ?? (paramIdSet.has(ref) ? ref as ResourceId : undefined);
+                    if (pid) used.add(pid);
+                }
             }
         }
         for (const reads of passInferredReads.values()) {
@@ -923,7 +1011,7 @@ export function PipelineTimelineView() {
             }
         }
         return used;
-    }, [resources.inputParameters, pipeline.passes, passInferredReads]);
+    }, [resources.inputParameters, pipeline.passes, passInferredReads, passStepInputRefs]);
 
     const unusedIds = useMemo(() => {
         const unused = new Set<string>();
@@ -1511,6 +1599,18 @@ export function PipelineTimelineView() {
                 >
                     same-TL edges
                 </button>
+                {controllers.length > 0 && (
+                    <button
+                        onClick={() => setShowControllers((v) => !v)}
+                        className={`text-[10px] px-2 py-0.5 rounded border transition-colors font-mono flex items-center gap-1
+                            ${showControllers ? "border-amber-600/60 bg-amber-950/40 text-amber-300" : "border-zinc-700/50 text-zinc-600 hover:text-zinc-400"}`}
+                    >
+                        {controllerValues.size > 0 && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                        )}
+                        controllers
+                    </button>
+                )}
                 <div className="flex-1" />
                 <div className="relative" ref={addMenuRef}>
                     <button
@@ -1537,6 +1637,40 @@ export function PipelineTimelineView() {
                     )}
                 </div>
             </div>
+
+            {/* Controller panel */}
+            {showControllers && controllers.length > 0 && (
+                <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800/70 bg-zinc-900/60 shrink-0 flex-wrap">
+                    <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0">Conditions</span>
+                    {controllers.map((p) => {
+                        const val = controllerValues.get(p.name);
+                        // Cycle: unset → true → false → unset
+                        const next = val === undefined ? true : val === true ? false : undefined;
+                        const cls = val === true
+                            ? "bg-green-900/50 text-green-300 border-green-700/60"
+                            : val === false
+                            ? "bg-red-900/40 text-red-300 border-red-700/50 line-through"
+                            : "bg-zinc-800/60 text-zinc-400 border-zinc-700/50 hover:border-zinc-500 hover:text-zinc-200";
+                        const indicator = val === true ? " ✓" : val === false ? " ✗" : "";
+                        return (
+                            <button
+                                key={p.id}
+                                onClick={() => setController(p.name, next)}
+                                title={val === undefined ? "Unset — click to set true" : val ? "True — click to set false" : "False — click to unset"}
+                                className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors shrink-0 ${cls}`}
+                            >
+                                {p.name}{indicator}
+                            </button>
+                        );
+                    })}
+                    {controllerValues.size > 0 && (
+                        <button
+                            onClick={() => setControllerValues(new Map())}
+                            className="text-[10px] text-zinc-600 hover:text-zinc-300 font-mono ml-1"
+                        >reset all</button>
+                    )}
+                </div>
+            )}
 
             {/* Body */}
             <div
@@ -2067,14 +2201,22 @@ export function PipelineTimelineView() {
                                                     pointerEvents: "none",
                                                 }}
                                             >
-                                                {pass.conditions.slice(0, 2).map((c) => (
-                                                    <span
-                                                        key={c}
-                                                        className="text-[8px] bg-amber-950/80 text-amber-400 border border-amber-800/60 rounded-sm px-1 font-mono leading-3 truncate shrink-0 max-w-[56px]"
-                                                    >
-                                                        {c}
-                                                    </span>
-                                                ))}
+                                                {pass.conditions.slice(0, 2).map((c) => {
+                                                    const neg = c.startsWith("!");
+                                                    const name = neg ? c.slice(1) : c;
+                                                    const val = controllerValues.get(name);
+                                                    const effective = val === undefined ? undefined : (neg ? !val : val);
+                                                    const cls = effective === true
+                                                        ? "bg-green-950/80 text-green-400 border-green-800/60"
+                                                        : effective === false
+                                                        ? "bg-zinc-800/80 text-zinc-500 border-zinc-700/60 line-through"
+                                                        : "bg-amber-950/80 text-amber-400 border-amber-800/60";
+                                                    return (
+                                                        <span key={c} className={`text-[8px] border rounded-sm px-1 font-mono leading-3 truncate shrink-0 max-w-[56px] ${cls}`}>
+                                                            {c}
+                                                        </span>
+                                                    );
+                                                })}
                                                 {pass.conditions.length > 2 && (
                                                     <span className="text-[8px] text-amber-600/70 font-mono shrink-0">
                                                         +{pass.conditions.length - 2}

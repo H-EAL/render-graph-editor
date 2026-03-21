@@ -21,6 +21,78 @@ import type { Step, Pass, ResourceId, IfBlockStep, EnableIfStep, ValueSource } f
 import type { ShaderDescriptor } from "./shaderApi";
 import { collectValueSourceResourceIds } from "./valueSource";
 
+// ─── Step input-parameter reference collection ────────────────────────────────
+
+export interface StepInputParamRefs {
+    /** InputParameter names used as boolean conditions (ifBlock/enableIf/select) */
+    conditionRefs: string[];
+    /** InputParameter names or IDs used as data bindings (kind:"input" leaves) */
+    dataRefs: string[];
+}
+
+function collectVsConditions(vs: ValueSource): string[] {
+    if (vs.kind === "select") {
+        return [vs.condition, ...collectVsConditions(vs.trueValue), ...collectVsConditions(vs.falseValue)];
+    }
+    return [];
+}
+
+function collectVsDataRefs(vs: ValueSource): string[] {
+    if (vs.kind === "input") return [vs.inputId];
+    if (vs.kind === "select") {
+        return [...collectVsDataRefs(vs.trueValue), ...collectVsDataRefs(vs.falseValue)];
+    }
+    return [];
+}
+
+/**
+ * Walk the step tree rooted at `stepIds` and collect all InputParameter
+ * references from:
+ *  - ifBlock / enableIf condition strings  → conditionRefs
+ *  - fieldSelectors select.condition names → conditionRefs
+ *  - fieldSelectors input.inputId values   → dataRefs
+ */
+export function collectStepInputParamRefs(
+    stepIds: string[],
+    steps: Record<string, Step>,
+): StepInputParamRefs {
+    const conditionRefs = new Set<string>();
+    const dataRefs = new Set<string>();
+
+    function walkStep(step: Step) {
+        if (step.type === "ifBlock") {
+            const ib = step as IfBlockStep;
+            if (ib.condition) conditionRefs.add(ib.condition);
+            for (const sid of [...ib.thenSteps, ...ib.elseSteps]) {
+                const child = steps[sid];
+                if (child) walkStep(child);
+            }
+        } else if (step.type === "enableIf") {
+            const ei = step as EnableIfStep;
+            if (ei.condition) conditionRefs.add(ei.condition);
+            for (const sid of ei.thenSteps) {
+                const child = steps[sid];
+                if (child) walkStep(child);
+            }
+        }
+        // fieldSelectors on any step type
+        const anyStep = step as { fieldSelectors?: Record<string, ValueSource> };
+        if (anyStep.fieldSelectors) {
+            for (const vs of Object.values(anyStep.fieldSelectors)) {
+                for (const c of collectVsConditions(vs)) conditionRefs.add(c);
+                for (const d of collectVsDataRefs(vs)) dataRefs.add(d);
+            }
+        }
+    }
+
+    for (const sid of stepIds) {
+        const step = steps[sid];
+        if (step) walkStep(step);
+    }
+
+    return { conditionRefs: [...conditionRefs], dataRefs: [...dataRefs] };
+}
+
 export interface StepResources {
     reads: ResourceId[];
     writes: ResourceId[];
@@ -356,18 +428,26 @@ export function buildResourceOrigins(
 /**
  * Returns the union of resources inferred across all steps that belong to a pass
  * (base active steps, fallback steps, and all variant active steps).
+ *
+ * @param mode  "active"   — only active steps + variants (condition is true)
+ *              "fallback" — only disabled/fallback steps (condition is false)
+ *              omitted    — union of all (default, conservative)
  */
-export function inferPassResources(pass: Pass, steps: Record<string, Step>): StepResources {
+export function inferPassResources(
+    pass: Pass,
+    steps: Record<string, Step>,
+    mode?: "active" | "fallback",
+): StepResources {
     const reads = new Set<ResourceId>();
     const writes = new Set<ResourceId>();
 
-    const allTopLevel = [
-        ...pass.steps,
-        ...(pass.disabledSteps ?? []),
-        ...(pass.variants ?? []).flatMap((v) => v.activeSteps),
-    ];
+    const stepIds = mode === "active"
+        ? [...pass.steps, ...(pass.variants ?? []).flatMap((v) => v.activeSteps)]
+        : mode === "fallback"
+        ? (pass.disabledSteps ?? [])
+        : [...pass.steps, ...(pass.disabledSteps ?? []), ...(pass.variants ?? []).flatMap((v) => v.activeSteps)];
 
-    for (const stepId of allTopLevel) {
+    for (const stepId of stepIds) {
         const step = steps[stepId];
         if (!step) continue;
         const { reads: r, writes: w } = inferStepResources(step, null, steps);

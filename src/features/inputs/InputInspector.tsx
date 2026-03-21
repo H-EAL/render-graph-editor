@@ -279,6 +279,7 @@ function DependencyInfo({
 }) {
     const pipeline = useStore((s) => s.pipeline);
     const resources = useStore((s) => s.resources);
+    const selectPass = useStore((s) => s.selectPass);
     const dependsOn = buildDependsOn(definitions).get(defId) ?? new Set<InputId>();
     const usedBy = buildUsedBy(definitions).get(defId) ?? new Set<InputId>();
     const usedInPasses = buildInputPassUsage(defId, pipeline, resources);
@@ -289,15 +290,27 @@ function DependencyInfo({
     return (
         <div className="flex flex-col gap-1.5 text-[10px]">
             {usedInPasses.length > 0 && (
-                <div className="flex items-start gap-2">
+                <div className="flex flex-col gap-1">
                     <span className="text-zinc-500 shrink-0">Passes:</span>
-                    <span className="text-zinc-300 flex flex-wrap gap-1">
+                    <div className="flex flex-col gap-0.5">
                         {usedInPasses.map((p) => (
-                            <span key={p.id} className="bg-blue-900/30 border border-blue-800/40 rounded px-1.5 py-0.5 text-[9px] text-blue-300">
-                                {p.name}
-                            </span>
+                            <div key={p.id} className="flex items-center gap-1.5">
+                                <button
+                                    className="text-blue-300 hover:text-white hover:underline text-left truncate flex-1"
+                                    onClick={() => selectPass(p.id)}
+                                    title={`Jump to pass: ${p.name}`}
+                                >
+                                    {p.name}
+                                </button>
+                                {(p.kind === "condition" || p.kind === "both") && (
+                                    <span className="shrink-0 text-[9px] font-mono px-1 py-0.5 rounded bg-violet-900/40 border border-violet-700/40 text-violet-300">cond</span>
+                                )}
+                                {(p.kind === "data" || p.kind === "both") && (
+                                    <span className="shrink-0 text-[9px] font-mono px-1 py-0.5 rounded bg-sky-900/40 border border-sky-700/40 text-sky-300">data</span>
+                                )}
+                            </div>
                         ))}
-                    </span>
+                    </div>
                 </div>
             )}
             {dependsOn.size > 0 && (
