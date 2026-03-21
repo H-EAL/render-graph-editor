@@ -1639,13 +1639,31 @@ export const useStore = create<AppState>()(
             })),
 
         addInputParameter: (p) =>
-            set((s) => ({
-                resources: {
-                    ...s.resources,
-                    inputParameters: [...s.resources.inputParameters, p],
-                },
-                resourceOrder: [...s.resourceOrder, p.id],
-            })),
+            set((s) => {
+                const kindMap: Record<string, InputDefinition["kind"]> = {
+                    bool: "bool", float: "float", int: "int", uint: "int",
+                    vec2: "float", vec3: "float", vec4: "float", color: "color",
+                };
+                const alreadyHasDef = s.inputDefinitions.some((d) => d.id === p.name);
+                const newDef: InputDefinition = {
+                    id: p.name,
+                    label: p.name,
+                    description: p.description,
+                    kind: kindMap[p.type] ?? "float",
+                    defaultValue: p.defaultValue,
+                    categoryPath: [],
+                };
+                return {
+                    resources: {
+                        ...s.resources,
+                        inputParameters: [...s.resources.inputParameters, p],
+                    },
+                    resourceOrder: [...s.resourceOrder, p.id],
+                    inputDefinitions: alreadyHasDef
+                        ? s.inputDefinitions
+                        : [...s.inputDefinitions, newDef],
+                };
+            }),
         updateInputParameter: (id, patch) =>
             set((s) => ({
                 resources: {

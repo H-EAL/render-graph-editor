@@ -353,6 +353,8 @@ export function InputInspector({ definition: def, definitions, onChange }: Input
     const u = (patch: Partial<InputDefinition>) => onChange(patch);
 
     const isNumeric = def.kind === "int" || def.kind === "float";
+    const isDuplicateLabel = (label: string) =>
+        definitions.some((d) => d.id !== def.id && d.label === label);
 
     return (
         <div className="flex flex-col overflow-y-auto h-full">
@@ -363,12 +365,19 @@ export function InputInspector({ definition: def, definitions, onChange }: Input
                     <div className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest mb-2">Basic</div>
                     <div className={ROW}>
                         <span className={LABEL}>Label</span>
-                        <input
-                            type="text"
-                            value={def.label}
-                            onChange={(e) => u({ label: e.target.value })}
-                            className={FIELD}
-                        />
+                        <div className="flex-1 flex flex-col gap-0.5 min-w-0">
+                            <input
+                                type="text"
+                                value={def.label}
+                                onChange={(e) => {
+                                    if (!isDuplicateLabel(e.target.value)) u({ label: e.target.value });
+                                }}
+                                className={`${FIELD} ${isDuplicateLabel(def.label) ? 'border-red-500/60' : ''}`}
+                            />
+                            {isDuplicateLabel(def.label) && (
+                                <span className="text-[9px] text-red-400">Name already in use</span>
+                            )}
+                        </div>
                     </div>
                     <div className={ROW}>
                         <span className={LABEL}>ID</span>

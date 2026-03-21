@@ -705,7 +705,7 @@ export function StepList({ passId, variants, activeVariantId, onVariantChange }:
         )}
 
         {/* ── Fallback Steps ── */}
-        <div className="mt-2 border-l-2 border-zinc-500/30">
+        {(pass.conditions.length > 0 || fallbackIds.length > 0) && <div className="mt-2 border-l-2 border-zinc-500/30">
           <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700/60 bg-zinc-800/40">
             <button className="flex items-center gap-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider hover:text-zinc-300"
               onClick={() => setFallbackCollapsed(!fallbackCollapsed)}>
@@ -739,7 +739,7 @@ export function StepList({ passId, variants, activeVariantId, onVariantChange }:
               </SortableContext>
             )
           )}
-        </div>
+        </div>}
 
       </DndContext>
     </div>

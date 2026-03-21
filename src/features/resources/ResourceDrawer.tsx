@@ -462,86 +462,15 @@ export function ResourceDrawer() {
                 {/* ── Input Parameter ── */}
                 {param && (() => {
                     const def = inputDefinitions.find((d) => d.id === param.name);
-                    if (def) {
-                        return (
-                            <div className="-m-3 h-full">
-                                <InputInspector
-                                    definition={def}
-                                    definitions={inputDefinitions}
-                                    onChange={(patch) => updateInputDefinition(def.id, patch)}
-                                />
-                            </div>
-                        );
-                    }
-                    // Fallback: no matching InputDefinition — show basic editor
+                    if (!def) return null;
                     return (
-                        <>
-                            <Section label="Properties" />
-                            <div className="grid grid-cols-2 gap-2">
-                                <Input
-                                    label="Name"
-                                    value={param.name}
-                                    onChange={(e) =>
-                                        updateInputParameter(param.id, { name: e.target.value })
-                                    }
-                                />
-                                <Select
-                                    label="Type"
-                                    options={PARAM_TYPE_OPTS}
-                                    value={param.type}
-                                    onChange={(e) =>
-                                        updateInputParameter(param.id, {
-                                            type: e.target.value as InputParamType,
-                                        })
-                                    }
-                                />
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <Input
-                                    label="Default Value"
-                                    value={param.defaultValue}
-                                    onChange={(e) =>
-                                        updateInputParameter(param.id, { defaultValue: e.target.value })
-                                    }
-                                />
-                                <Input
-                                    label="Description"
-                                    value={param.description ?? ""}
-                                    placeholder="Optional…"
-                                    onChange={(e) =>
-                                        updateInputParameter(param.id, { description: e.target.value })
-                                    }
-                                />
-                            </div>
-                            {paramUsage.length > 0 && (
-                                <>
-                                    <Section label="Usage" />
-                                    <div className="flex flex-col gap-1">
-                                        {paramUsage.map((p) => (
-                                            <div key={p.id} className="flex items-center gap-2 text-[10px]">
-                                                <button
-                                                    className="text-zinc-300 hover:text-white hover:underline text-left flex-1 truncate"
-                                                    onClick={() => selectPass(p.id)}
-                                                    title={`Jump to pass: ${p.name}`}
-                                                >
-                                                    {p.name}
-                                                </button>
-                                                {(p.kind === "condition" || p.kind === "both") && (
-                                                    <span className="shrink-0 text-[9px] font-mono px-1 py-0.5 rounded bg-violet-900/40 border border-violet-700/40 text-violet-300">
-                                                        cond
-                                                    </span>
-                                                )}
-                                                {(p.kind === "data" || p.kind === "both") && (
-                                                    <span className="shrink-0 text-[9px] font-mono px-1 py-0.5 rounded bg-sky-900/40 border border-sky-700/40 text-sky-300">
-                                                        data
-                                                    </span>
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </>
-                            )}
-                        </>
+                        <div className="-m-3 h-full">
+                            <InputInspector
+                                definition={def}
+                                definitions={inputDefinitions}
+                                onChange={(patch) => updateInputDefinition(def.id, patch)}
+                            />
+                        </div>
                     );
                 })()}
                 {!param && usage && (usage.writers.length > 0 || usage.readers.length > 0) && (

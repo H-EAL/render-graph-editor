@@ -1250,7 +1250,11 @@ export function PipelineTimelineView() {
     };
     const createInputParam = () => {
         const id = newId();
-        addInputParameter({ id, name: "NewParam", type: "float", defaultValue: "0.0" });
+        const existingNames = new Set(resources.inputParameters.map((p) => p.name));
+        let name = "NewParam";
+        let i = 1;
+        while (existingNames.has(name)) name = `NewParam${i++}`;
+        addInputParameter({ id, name, type: "float", defaultValue: "0.0" });
         selectResource(id);
         setAddResPos(null);
     };
