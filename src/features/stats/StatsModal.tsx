@@ -100,7 +100,7 @@ const SPARK_H = 48;
 
 const RIGHT_W = 90;
 
-function AliasingChart({ aliasing, rtTotalBytes }: { aliasing: AliasingStats; rtTotalBytes: number }) {
+function AliasingChart({ aliasing }: { aliasing: AliasingStats; rtTotalBytes?: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [containerW, setContainerW] = useState(0);

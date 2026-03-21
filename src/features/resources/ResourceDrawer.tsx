@@ -5,7 +5,7 @@ import { Select } from "../../components/ui/Select";
 import { getResourceUsage } from "../../utils/dependencyGraph";
 import { buildInputPassUsage } from "../../utils/inputCondition";
 import { InputInspector } from "../inputs/InputInspector";
-import type { TextureFormat, ShaderStage, InputParamType, BlendFactor, BlendOp } from "../../types";
+import type { TextureFormat, ShaderStage, BlendFactor, BlendOp } from "../../types";
 
 // ─── Option lists ─────────────────────────────────────────────────────────────
 
@@ -34,16 +34,6 @@ const STAGE_OPTS: { value: ShaderStage; label: string }[] = [
     { value: "closesthit", label: "Closest Hit" },
 ];
 
-const PARAM_TYPE_OPTS: { value: InputParamType; label: string }[] = [
-    { value: "bool", label: "Bool" },
-    { value: "float", label: "Float" },
-    { value: "uint", label: "Uint" },
-    { value: "int", label: "Int" },
-    { value: "vec2", label: "Vec2" },
-    { value: "vec3", label: "Vec3" },
-    { value: "vec4", label: "Vec4" },
-    { value: "color", label: "Color" },
-];
 
 const BLEND_FACTOR_OPTS: { value: BlendFactor; label: string }[] = [
     { value: "zero", label: "Zero" },
@@ -111,7 +101,6 @@ export function ResourceDrawer() {
         deleteBlendState,
         updateShader,
         deleteShader,
-        updateInputParameter,
         updateInputDefinition,
         deleteInputParameter,
     } = useStore();
