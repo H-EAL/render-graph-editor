@@ -30,6 +30,7 @@ import type {
     ClearImagesStep,
     FillBufferStep,
     GenerateMipChainStep,
+    EnableIfStep,
     ColorAttachment,
     DepthAttachment,
     DrawBatchCommand,
@@ -296,8 +297,10 @@ export function importRgJson(raw: unknown): PipelineDocument {
         step: Step;
         reads: string[];
         writes: string[];
+        isFallback: boolean;
     }
     let pendingGroup: PendingStep[] = [];
+    /** Only the first (pass-level) condition is tracked for coalescing decisions. */
     let pendingConditions: string[] = [];
     let pendingGroupWrites = new Set<string>();
 
@@ -305,14 +308,21 @@ export function importRgJson(raw: unknown): PipelineDocument {
     function flushPendingGroup() {
         if (pendingGroup.length === 0) return;
 
-        const names = pendingGroup.map((p) => p.step.name);
+        const regularSteps = pendingGroup.filter((p) => !p.isFallback);
+        const fallbackSteps = pendingGroup.filter((p) => p.isFallback);
+        const namingSteps = regularSteps.length > 0 ? regularSteps : pendingGroup;
+
+        const names = namingSteps.map((p) => p.step.name);
         const prefix = commonPrefix(names);
+        const passCondition = pendingConditions[0];
         const passName =
-            pendingGroup.length === 1
+            names.length === 1
                 ? names[0]
-                : prefix
-                  ? `${prefix} (${pendingGroup.length})`
-                  : `${names[0]} (+${pendingGroup.length - 1})`;
+                : passCondition
+                  ? passCondition.startsWith("!") ? passCondition.slice(1) : passCondition
+                  : prefix
+                    ? `${prefix} (${names.length})`
+                    : `${names[0]} (+${names.length - 1})`;
 
         const passId = uniqueId(`pass-${slug(passName)}`, usedIds);
         const allReads = [...new Set(pendingGroup.flatMap((p) => p.reads))];
@@ -323,10 +333,11 @@ export function importRgJson(raw: unknown): PipelineDocument {
             name: passName,
             timelineId: "tl-gfx",
             enabled: true,
-            conditions: pendingConditions,
+            conditions: pendingConditions.length > 0 ? [pendingConditions[0]] : [],
             reads: allReads,
             writes: allWrites,
-            steps: pendingGroup.map((p) => p.step.id),
+            steps: regularSteps.map((p) => p.step.id),
+            disabledSteps: fallbackSteps.length > 0 ? fallbackSteps.map((p) => p.step.id) : undefined,
         };
         passes[passId] = pass;
         timelinePassIds.push(passId);
@@ -337,23 +348,36 @@ export function importRgJson(raw: unknown): PipelineDocument {
     }
 
     /**
+     * If the first conditions of a and b are negations of each other
+     * (e.g. ["!X"] vs ["X", ...] or ["X"] vs ["!X", ...]),
+     * returns the positive condition string. Otherwise returns null.
+     */
+    function getOppositePassCondition(a: string[], b: string[]): string | null {
+        if (a.length === 0 || b.length === 0) return null;
+        const neg = (c: string) => (c.startsWith("!") ? c.slice(1) : `!${c}`);
+        if (a[0] === neg(b[0])) return b[0].startsWith("!") ? a[0] : b[0];
+        return null;
+    }
+
+    /**
      * Check whether a new standalone node can be merged into the current pending
      * group.  Returns false (meaning: flush first) when:
-     *   1. The node has different conditions from the group.
+     *   1. The node's first condition differs from the group's pass condition.
      *   2. The node reads a resource that the group already wrote (WAR dependency
      *      that would require a pipeline barrier between the two nodes).
+     *
+     * Only conditions[0] is compared — conditions[1] becomes a per-step enableIf
+     * and does not affect pass-level grouping.
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     function canCoalesceNode(node: any): boolean {
         if (pendingGroup.length === 0) return true;
 
-        // Condition match
+        // Only compare the first (pass-level) condition
         const nodeConditions: string[] = node.conditions ?? [];
-        if (
-            nodeConditions.length !== pendingConditions.length ||
-            !nodeConditions.every((c, i) => c === pendingConditions[i])
-        )
-            return false;
+        const nodeFirstCond = nodeConditions[0] ?? "";
+        const pendingFirstCond = pendingConditions[0] ?? "";
+        if (nodeFirstCond !== pendingFirstCond) return false;
 
         // No WAR conflict: node's reads must not overlap group's accumulated writes
         const nodeReads = rtIds(node.inputRenderTargetIndices);
@@ -453,6 +477,29 @@ export function importRgJson(raw: unknown): PipelineDocument {
             sizeRefSlot,
             constants,
         };
+    }
+
+    /**
+     * Wraps an existing step in a single enableIf block for the given condition.
+     * Returns the ID of the wrapper step.
+     * The inner step's conditions are cleared since they're now represented structurally.
+     */
+    function wrapWithCondition(innerStepId: string, condition: string): string {
+        const inner = steps[innerStepId];
+        if (inner) inner.conditions = [];
+        const wrapperId = uniqueId(`step-enableif-${slug(condition)}`, usedIds);
+        const wrapperStep: EnableIfStep = {
+            id: wrapperId,
+            type: "enableIf",
+            name: condition.startsWith("!") ? `if NOT ${condition.slice(1)}` : `if ${condition}`,
+            reads: [],
+            writes: [],
+            conditions: [],
+            condition,
+            thenSteps: [innerStepId],
+        };
+        steps[wrapperId] = wrapperStep;
+        return wrapperId;
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -607,7 +654,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
                 name: rp.name,
                 reads: [...passReads],
                 writes: [...passWrites],
-                conditions: passConditions,
+                conditions: [],
                 attachments: {
                     colorAttachments,
                     depthAttachment,
@@ -617,15 +664,21 @@ export function importRgJson(raw: unknown): PipelineDocument {
             };
             steps[stepId] = rasterStep;
 
+            // conditions[0] → pass condition; conditions[1] → optional enableIf on the step
+            const outerRasterStepId =
+                passConditions.length > 1
+                    ? wrapWithCondition(stepId, passConditions[1])
+                    : stepId;
+
             const pass: Pass = {
                 id: passId,
                 name: rp.name,
                 timelineId: "tl-gfx",
                 enabled: true,
-                conditions: passConditions,
+                conditions: passConditions.length > 0 ? [passConditions[0]] : [],
                 reads: [...passReads],
                 writes: [...passWrites],
-                steps: [stepId],
+                steps: [outerRasterStepId],
             };
             passes[passId] = pass;
             timelinePassIds.push(passId);
@@ -822,15 +875,36 @@ export function importRgJson(raw: unknown): PipelineDocument {
             if (!step) continue;
             steps[stepId] = step;
 
-            // ── Coalesce into pending group (or flush + start fresh) ───────────────
-            if (!canCoalesceNode(node)) {
+            // conditions[0] → pass condition; conditions[1] → optional enableIf on the step
+            const outerStepId =
+                conditions.length > 1
+                    ? wrapWithCondition(stepId, conditions[1])
+                    : stepId;
+
+            // ── Coalesce / opposite-merge / flush ────────────────────────────────
+            const positiveCondition = getOppositePassCondition(pendingConditions, conditions);
+
+            if (positiveCondition !== null) {
+                // This node's condition is the negation of the pending group's condition.
+                // Merge: the "true" side is regular steps, the "false" side is fallback steps.
+                const pendingAreFallback = pendingConditions[0].startsWith("!");
+                if (pendingAreFallback) {
+                    // Existing pending steps are the "false" side → mark them as fallback
+                    pendingGroup = pendingGroup.map((p) => ({ ...p, isFallback: true }));
+                }
+                pendingConditions = [positiveCondition];
+                for (const w of writes) pendingGroupWrites.add(w);
+                pendingGroup.push({ step: steps[outerStepId], reads, writes, isFallback: !pendingAreFallback });
+            } else if (!canCoalesceNode(node)) {
                 flushPendingGroup();
-                pendingConditions = conditions;
-            } else if (pendingGroup.length === 0) {
-                pendingConditions = conditions;
+                pendingConditions = conditions.length > 0 ? [conditions[0]] : [];
+                for (const w of writes) pendingGroupWrites.add(w);
+                pendingGroup.push({ step: steps[outerStepId], reads, writes, isFallback: false });
+            } else {
+                if (pendingGroup.length === 0) pendingConditions = conditions.length > 0 ? [conditions[0]] : [];
+                for (const w of writes) pendingGroupWrites.add(w);
+                pendingGroup.push({ step: steps[outerStepId], reads, writes, isFallback: false });
             }
-            for (const w of writes) pendingGroupWrites.add(w);
-            pendingGroup.push({ step, reads, writes });
         }
     }
 

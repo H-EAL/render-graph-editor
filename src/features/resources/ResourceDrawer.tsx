@@ -153,7 +153,7 @@ export function ResourceDrawer() {
         : buf
           ? "text-amber-400"
           : bs
-            ? "text-emerald-400"
+            ? "text-pink-400"
             : sh
               ? "text-purple-400"
               : "text-zinc-400";

@@ -173,6 +173,7 @@ function resourceOrderFromLibrary(resources: ResourceLibrary): ResourceId[] {
         ...resources.renderTargets.map((r) => r.id),
         ...resources.buffers.map((b) => b.id),
         ...resources.inputParameters.map((p) => p.id),
+        ...resources.blendStates.map((bs) => bs.id),
     ];
 }
 
@@ -235,8 +236,9 @@ export interface AppState {
     addVariant: (passId: PassId) => void;
     deleteVariant: (passId: PassId, variantId: VariantId) => void;
     renameVariant: (passId: PassId, variantId: VariantId, name: string) => void;
-    /** Set the enum InputDefinition that drives variant selection. Pass null to clear. Automatically creates/replaces variants from enumOptions. */
-    setPassVariantEnum: (passId: PassId, inputDefId: string | null) => void;
+    /** Set the enum InputDefinition that drives variant selection. Pass null to clear. Automatically creates/replaces variants from enumOptions.
+     *  When preserveSteps is true, existing variant steps are moved to common steps instead of deleted. */
+    setPassVariantEnum: (passId: PassId, inputDefId: string | null, options?: { preserveSteps?: boolean }) => void;
     addStepToVariant: (passId: PassId, variantId: VariantId, type: StepType) => void;
     deleteStepFromVariant: (passId: PassId, variantId: VariantId, stepId: StepId) => void;
     duplicateStepInVariant: (passId: PassId, variantId: VariantId, stepId: StepId) => void;
@@ -970,23 +972,31 @@ export const useStore = create<AppState>()(
                 };
             }),
 
-        setPassVariantEnum: (passId, inputDefId) =>
+        setPassVariantEnum: (passId, inputDefId, options) =>
             set((s) => {
                 const pass = s.pipeline.passes[passId];
                 if (!pass) return {};
-                // Delete all existing variant steps
-                const toDelete = (pass.variants ?? []).flatMap((v) =>
-                    v.activeSteps.flatMap((sid) => collectAllStepIds(sid, s.pipeline.steps)),
-                );
+                const variantStepIds = (pass.variants ?? []).flatMap((v) => v.activeSteps);
                 const steps = { ...s.pipeline.steps };
-                toDelete.forEach((sid) => delete steps[sid]);
+                if (options?.preserveSteps) {
+                    // Move all variant steps (top-level only) to common steps
+                } else {
+                    // Delete all existing variant steps
+                    const toDelete = (pass.variants ?? []).flatMap((v) =>
+                        v.activeSteps.flatMap((sid) => collectAllStepIds(sid, s.pipeline.steps)),
+                    );
+                    toDelete.forEach((sid) => delete steps[sid]);
+                }
+                const newCommonSteps = options?.preserveSteps
+                    ? [...pass.steps, ...variantStepIds]
+                    : pass.steps;
                 if (!inputDefId) {
                     return {
                         pipeline: {
                             ...s.pipeline,
                             passes: {
                                 ...s.pipeline.passes,
-                                [passId]: { ...pass, variantEnumInputId: undefined, variants: [] },
+                                [passId]: { ...pass, variantEnumInputId: undefined, variants: [], steps: newCommonSteps },
                             },
                             steps,
                         },
@@ -1005,7 +1015,7 @@ export const useStore = create<AppState>()(
                         ...s.pipeline,
                         passes: {
                             ...s.pipeline.passes,
-                            [passId]: { ...pass, variantEnumInputId: inputDefId, variants: newVariants },
+                            [passId]: { ...pass, variantEnumInputId: inputDefId, variants: newVariants, steps: newCommonSteps },
                         },
                         steps,
                     },
@@ -1547,6 +1557,7 @@ export const useStore = create<AppState>()(
                     ...s.resources,
                     blendStates: [...s.resources.blendStates, bs],
                 },
+                resourceOrder: [...s.resourceOrder, bs.id],
             })),
         updateBlendState: (id, patch) =>
             set((s) => ({
@@ -1564,6 +1575,7 @@ export const useStore = create<AppState>()(
                     blendStates: s.resources.blendStates.filter((r) => r.id !== id),
                 },
                 selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
+                resourceOrder: s.resourceOrder.filter((rid) => rid !== id),
             })),
 
         addShader: (sh) =>

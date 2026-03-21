@@ -358,15 +358,21 @@ function inferStepConditions(stepId: string, pipeline: Pipeline): InferredCondit
     );
 
     if (parentPass) {
-        for (const c of parentPass.conditions) {
-            result.push({ condition: c, source: parentPass.name, sourceKind: "pass" });
-        }
-        const variant = (parentPass.variants ?? []).find((v) => v.activeSteps.includes(stepId));
-        if (variant) {
-            result.push({ condition: variant.selector ?? variant.name, source: `Variant: ${variant.name}`, sourceKind: "variant" });
-        }
-        if ((parentPass.disabledSteps ?? []).includes(stepId)) {
-            result.push({ condition: "disabled", source: "Fallback container", sourceKind: "fallback" });
+        const isFallback = (parentPass.disabledSteps ?? []).includes(stepId);
+        if (isFallback) {
+            const negatedConds = parentPass.conditions.map((c) =>
+                c.startsWith("!") ? `NOT ${c.slice(1)}` : `NOT ${c}`,
+            );
+            const label = negatedConds.length > 0 ? negatedConds.join(" AND ") : "NOT (pass condition)";
+            result.push({ condition: label, source: "Fallback container", sourceKind: "fallback" });
+        } else {
+            for (const c of parentPass.conditions) {
+                result.push({ condition: c, source: parentPass.name, sourceKind: "pass" });
+            }
+            const variant = (parentPass.variants ?? []).find((v) => v.activeSteps.includes(stepId));
+            if (variant) {
+                result.push({ condition: variant.selector ?? variant.name, source: `Variant: ${variant.name}`, sourceKind: "variant" });
+            }
         }
     }
 
@@ -376,12 +382,13 @@ function inferStepConditions(stepId: string, pipeline: Pipeline): InferredCondit
             if (ifStep.thenSteps.includes(stepId)) {
                 result.push({ condition: ifStep.condition, source: `if (then): ${ifStep.condition}`, sourceKind: "ifBlock" });
             } else if ((ifStep.elseSteps ?? []).includes(stepId)) {
-                result.push({ condition: `!${ifStep.condition}`, source: `if (else): !${ifStep.condition}`, sourceKind: "ifBlock" });
+                result.push({ condition: `NOT ${ifStep.condition}`, source: `if (else): NOT ${ifStep.condition}`, sourceKind: "ifBlock" });
             }
         } else if (s.type === "enableIf") {
             const eiStep = s as EnableIfStep;
             if (eiStep.thenSteps.includes(stepId)) {
-                result.push({ condition: eiStep.condition, source: `enable if: ${eiStep.condition}`, sourceKind: "enableIf" });
+                const displayCond = eiStep.condition.startsWith("!") ? `NOT ${eiStep.condition.slice(1)}` : eiStep.condition;
+                result.push({ condition: displayCond, source: `enable if: ${displayCond}`, sourceKind: "enableIf" });
             }
         }
     }

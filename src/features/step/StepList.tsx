@@ -93,7 +93,7 @@ function ConditionSelect({
         }`}
         onClick={() => paramName && onChange((negated ? '' : '!') + paramName)}
       >
-        !
+        NOT
       </button>
       <select
         className={`flex-1 min-w-0 bg-zinc-800 border border-zinc-600/60 text-zinc-200 text-xs rounded px-2 py-0.5 font-mono focus:outline-none focus:ring-1 ${ringCls}`}

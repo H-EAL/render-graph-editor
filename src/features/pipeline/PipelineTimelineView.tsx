@@ -478,7 +478,7 @@ export function PipelineTimelineView() {
     const [focusedView, setFocusedView] = useState(false);
 
     // Filter state
-    type ResTypeFilter = "rt" | "buf" | "param";
+    type ResTypeFilter = "rt" | "buf" | "param" | "bs";
     const [filterText, setFilterText] = useState("");
     const [filterTypes, setFilterTypes] = useState<Set<ResTypeFilter>>(new Set());
     const [filterDead, setFilterDead] = useState(false);
@@ -675,6 +675,7 @@ export function PipelineTimelineView() {
         [resources],
     );
     const bufMap = useMemo(() => new Map(resources.buffers.map((b) => [b.id, b])), [resources]);
+    const bsMap = useMemo(() => new Map(resources.blendStates.map((bs) => [bs.id, bs])), [resources]);
     const paramMap = useMemo(
         () => new Map(resources.inputParameters.map((p) => [p.id, p])),
         [resources],
@@ -719,8 +720,9 @@ export function PipelineTimelineView() {
                 ...resources.renderTargets.map((r) => r.id),
                 ...resources.buffers.map((b) => b.id),
                 ...resources.inputParameters.map((p) => p.id),
+                ...resources.blendStates.map((bs) => bs.id),
             ]),
-        [resources.renderTargets, resources.buffers, resources.inputParameters],
+        [resources.renderTargets, resources.buffers, resources.inputParameters, resources.blendStates],
     );
 
     const overlayRows = useMemo(() => {
@@ -764,9 +766,11 @@ export function PipelineTimelineView() {
     }, [selectedResourceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Access map keyed by rid (unordered)
+    const usageMapEarly = useMemo(() => getResourceUsage(pipeline), [pipeline]);
     const allAccessMaps = useMemo(() => {
         const paramIds = new Set(resources.inputParameters.map((p) => p.id));
         const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
+        const bsIds = new Set(resources.blendStates.map((bs) => bs.id));
         return new Map(
             overlayRows.map((rid) => {
                 if (paramIds.has(rid)) {
@@ -784,10 +788,17 @@ export function PipelineTimelineView() {
                     }
                     return [rid, map] as const;
                 }
+                if (bsIds.has(rid)) {
+                    // Blend states: "read" for every pass that references them in commands/attachments
+                    const map = new Map<PassId, AccessKind>();
+                    const usage = usageMapEarly.get(rid);
+                    for (const { passId } of usage?.readers ?? []) map.set(passId, "read");
+                    return [rid, map] as const;
+                }
                 return [rid, derivePassAccess(rid, pipeline)] as const;
             }),
         );
-    }, [overlayRows, pipeline, resources.inputParameters, passInferredReads]);
+    }, [overlayRows, pipeline, resources.inputParameters, resources.blendStates, passInferredReads, usageMapEarly]);
 
     // Focused layout: per-timeline linear layout, compressing non-relevant passes into ellipsis nodes
     type EllipsisNode = { count: number; x: number; y: number };
@@ -881,7 +892,7 @@ export function PipelineTimelineView() {
         });
     }, [overlayRows, sortMode, resourceSpans]);
 
-    const usageMap = useMemo(() => getResourceUsage(pipeline), [pipeline]);
+    const usageMap = usageMapEarly;
     const deadWriteIds = useMemo(() => {
         const dead = new Set<string>();
         for (const [rid, usage] of usageMap) {
@@ -1003,13 +1014,15 @@ export function PipelineTimelineView() {
         return displayRows.filter((rid) => {
             const rt = rtMap.get(rid);
             const buf = bufMap.get(rid);
+            const bs = bsMap.get(rid);
             const param = paramMap.get(rid);
-            const name = rt?.name ?? buf?.name ?? param?.name ?? rid;
+            const name = rt?.name ?? buf?.name ?? bs?.name ?? param?.name ?? rid;
             if (txt && !name.toLowerCase().includes(txt)) return false;
             if (filterTypes.size > 0) {
                 if (rt && !filterTypes.has("rt")) return false;
                 if (buf && !filterTypes.has("buf")) return false;
                 if (param && !filterTypes.has("param")) return false;
+                if (bs && !filterTypes.has("bs")) return false;
             }
             if (filterDead && !deadWriteIds.has(rid)) return false;
             if (filterUnused) {
@@ -1030,6 +1043,7 @@ export function PipelineTimelineView() {
         filterRBW,
         rtMap,
         bufMap,
+        bsMap,
         paramMap,
         deadWriteIds,
         usageMap,
@@ -1044,7 +1058,7 @@ export function PipelineTimelineView() {
     );
 
     const resolveIds = (ids: string[]) =>
-        ids.map((id) => rtNames.get(id) ?? bufNames.get(id) ?? id).join(", ");
+        ids.map((id) => rtNames.get(id) ?? bufNames.get(id) ?? bsMap.get(id)?.name ?? id).join(", ");
 
     // ── Resource row DnD ───────────────────────────────────────────────────────
     const resSensors = useSensors(
@@ -2260,23 +2274,29 @@ export function PipelineTimelineView() {
                                     {filteredRows.map((rid) => {
                                         const rtObj = rtMap.get(rid);
                                         const bufObj = bufMap.get(rid);
+                                        const bsObj = bsMap.get(rid);
                                         const paramObj = paramMap.get(rid);
                                         const name = paramObj ? paramObj.name : resolveIds([rid]);
                                         const tooltip = rtObj
                                             ? `${rtObj.name}\nType: Render Target\nFormat: ${rtObj.format}\nSize: ${fmtRTSize(rtObj.width)} × ${fmtRTSize(rtObj.height)}\nMips: ${rtObj.mips}`
                                             : bufObj
                                               ? `${bufObj.name}\nType: Buffer\nSize: ${bufObj.size}`
-                                              : paramObj
-                                                ? `${paramObj.name}\nType: Input Param (${paramObj.type})\nDefault: ${paramObj.defaultValue}`
-                                                : name;
+                                              : bsObj
+                                                ? `${bsObj.name}\nType: Blend State\nBlend: ${bsObj.enabled ? "enabled" : "disabled"}`
+                                                : paramObj
+                                                  ? `${paramObj.name}\nType: Input Param (${paramObj.type})\nDefault: ${paramObj.defaultValue}`
+                                                  : name;
                                         const isRT = rtNames.has(rid);
+                                        const isBS = !!bsObj;
                                         const isParam = !!paramObj;
-                                        const icon = isRT ? "▣" : isParam ? "◈" : "▤";
+                                        const icon = isRT ? "▣" : isBS ? "⊞" : isParam ? "◈" : "▤";
                                         const iconCls = isRT
                                             ? "text-blue-400/80"
-                                            : isParam
-                                              ? "text-green-400/80"
-                                              : "text-amber-400/80";
+                                            : isBS
+                                              ? "text-pink-400/80"
+                                              : isParam
+                                                ? "text-green-400/80"
+                                                : "text-amber-400/80";
                                         const isDead = deadWriteIds.has(rid);
                                         const isUnused = unusedIds.has(rid);
                                         return (
@@ -2716,6 +2736,11 @@ export function PipelineTimelineView() {
                                         key: "param",
                                         label: "◆ Param",
                                         cls: "text-zinc-300 border-zinc-600 bg-zinc-800/60",
+                                    },
+                                    {
+                                        key: "bs",
+                                        label: "⊞ Blend",
+                                        cls: "text-pink-300 border-pink-700/60 bg-pink-950/40",
                                     },
                                 ] as { key: ResTypeFilter; label: string; cls: string }[]
                             ).map(({ key, label, cls }) => {

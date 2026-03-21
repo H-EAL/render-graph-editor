@@ -61,6 +61,11 @@ function DependencyRow({
 
 // ─── Main inspector ───────────────────────────────────────────────────────────
 
+interface PendingEnumChange {
+    newInputDefId: string | null;
+    variantStepCount: number;
+}
+
 export function PassInspector() {
     const {
         pipeline,
@@ -69,10 +74,11 @@ export function PassInspector() {
         selectedPassId,
         updatePass,
         selectResource,
-setPassVariantEnum,
+        setPassVariantEnum,
     } = useStore();
     const pass = selectedPassId ? pipeline.passes[selectedPassId] : null;
     const [editingVariantId, setEditingVariantId] = useState<VariantId | null>(null);
+    const [pendingEnumChange, setPendingEnumChange] = useState<PendingEnumChange | null>(null);
 
     // Reset variant tab when pass changes
     const [lastPassId, setLastPassId] = useState<string | null>(null);
@@ -145,7 +151,15 @@ setPassVariantEnum,
         resources.inputParameters.find((p) => p.id === rid)?.name ??
         rid;
 
+    const confirmEnumChange = (preserveSteps: boolean) => {
+        if (!pendingEnumChange || !pass) return;
+        setPassVariantEnum(pass.id, pendingEnumChange.newInputDefId, { preserveSteps });
+        setEditingVariantId(null);
+        setPendingEnumChange(null);
+    };
+
     return (
+        <>
         <div className="flex flex-col overflow-y-auto h-full">
             {/* ── Identity ── */}
             <InspectorSection title="Identity">
@@ -203,8 +217,14 @@ setPassVariantEnum,
                         className="flex-1 bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-violet-500/60"
                         value={pass.variantEnumInputId ?? ""}
                         onChange={(e) => {
-                            setPassVariantEnum(pass.id, e.target.value || null);
-                            setEditingVariantId(null);
+                            const newId = e.target.value || null;
+                            const variantStepCount = (pass.variants ?? []).reduce((n, v) => n + v.activeSteps.length, 0);
+                            if (variantStepCount > 0) {
+                                setPendingEnumChange({ newInputDefId: newId, variantStepCount });
+                            } else {
+                                setPassVariantEnum(pass.id, newId);
+                                setEditingVariantId(null);
+                            }
                         }}
                     >
                         <option value="">No variants</option>
@@ -404,5 +424,41 @@ setPassVariantEnum,
                 )}
             </InspectorSection>
         </div>
+
+        {/* ── Variant change confirmation modal ── */}
+        {pendingEnumChange && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setPendingEnumChange(null)}>
+                <div className="bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl w-80 p-5 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex flex-col gap-1.5">
+                        <span className="text-sm font-semibold text-zinc-100">Change variant enum?</span>
+                        <span className="text-xs text-zinc-400">
+                            This pass has <span className="text-zinc-200 font-medium">{pendingEnumChange.variantStepCount} variant step{pendingEnumChange.variantStepCount !== 1 ? "s" : ""}</span> that will be removed.
+                            Do you want to move them to common steps first?
+                        </span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                        <button
+                            onClick={() => confirmEnumChange(true)}
+                            className="w-full px-3 py-1.5 text-xs font-medium rounded bg-violet-600 hover:bg-violet-500 text-white transition-colors"
+                        >
+                            Move to common steps
+                        </button>
+                        <button
+                            onClick={() => confirmEnumChange(false)}
+                            className="w-full px-3 py-1.5 text-xs font-medium rounded bg-zinc-700 hover:bg-red-900/60 hover:text-red-300 text-zinc-300 transition-colors"
+                        >
+                            Discard variant steps
+                        </button>
+                        <button
+                            onClick={() => setPendingEnumChange(null)}
+                            className="w-full px-3 py-1.5 text-xs rounded text-zinc-500 hover:text-zinc-300 transition-colors"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+        </>
     );
 }
