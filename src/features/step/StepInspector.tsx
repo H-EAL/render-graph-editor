@@ -2,7 +2,6 @@ import { useStore } from "../../state/store";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { FieldRow, InspectorSection } from "../../components/ui/Panel";
-import { TagsInput } from "../../components/ui/TagsInput";
 import { ResourceSelect } from "../../components/ui/ResourceSelect";
 import { RasterCommandEditor } from "./editors/RasterCommandEditor";
 import { DispatchComputeEditor } from "./editors/DispatchComputeEditor";
@@ -18,6 +17,9 @@ import type {
     DepthAttachment,
     LoadOp,
     StoreOp,
+    IfBlockStep,
+    EnableIfStep,
+    Pipeline,
 } from "../../types";
 
 // ─── Raster step: attachment editors ─────────────────────────────────────────
@@ -337,6 +339,56 @@ function StepTypeEditor({ step }: { step: Step }) {
     }
 }
 
+// ─── Inferred conditions ──────────────────────────────────────────────────────
+
+interface InferredCondition {
+    condition: string;
+    source: string;
+    sourceKind: "pass" | "fallback" | "variant" | "ifBlock" | "enableIf";
+}
+
+function inferStepConditions(stepId: string, pipeline: Pipeline): InferredCondition[] {
+    const result: InferredCondition[] = [];
+
+    const parentPass = Object.values(pipeline.passes).find(
+        (p) =>
+            p.steps.includes(stepId) ||
+            (p.disabledSteps ?? []).includes(stepId) ||
+            (p.variants ?? []).some((v) => v.activeSteps.includes(stepId)),
+    );
+
+    if (parentPass) {
+        for (const c of parentPass.conditions) {
+            result.push({ condition: c, source: parentPass.name, sourceKind: "pass" });
+        }
+        const variant = (parentPass.variants ?? []).find((v) => v.activeSteps.includes(stepId));
+        if (variant) {
+            result.push({ condition: variant.selector ?? variant.name, source: `Variant: ${variant.name}`, sourceKind: "variant" });
+        }
+        if ((parentPass.disabledSteps ?? []).includes(stepId)) {
+            result.push({ condition: "disabled", source: "Fallback container", sourceKind: "fallback" });
+        }
+    }
+
+    for (const s of Object.values(pipeline.steps)) {
+        if (s.type === "ifBlock") {
+            const ifStep = s as IfBlockStep;
+            if (ifStep.thenSteps.includes(stepId)) {
+                result.push({ condition: ifStep.condition, source: `if (then): ${ifStep.condition}`, sourceKind: "ifBlock" });
+            } else if ((ifStep.elseSteps ?? []).includes(stepId)) {
+                result.push({ condition: `!${ifStep.condition}`, source: `if (else): !${ifStep.condition}`, sourceKind: "ifBlock" });
+            }
+        } else if (s.type === "enableIf") {
+            const eiStep = s as EnableIfStep;
+            if (eiStep.thenSteps.includes(stepId)) {
+                result.push({ condition: eiStep.condition, source: `enable if: ${eiStep.condition}`, sourceKind: "enableIf" });
+            }
+        }
+    }
+
+    return result;
+}
+
 // ─── Main inspector ───────────────────────────────────────────────────────────
 
 export function StepInspector() {
@@ -345,7 +397,11 @@ export function StepInspector() {
     const step = selectedStepId ? pipeline.steps[selectedStepId] : null;
 
     const parentPass = step
-        ? (Object.values(pipeline.passes).find((p) => p.steps.includes(step.id)) ?? null)
+        ? (Object.values(pipeline.passes).find((p) =>
+              p.steps.includes(step.id) ||
+              (p.disabledSteps ?? []).includes(step.id) ||
+              (p.variants ?? []).some((v) => v.activeSteps.includes(step.id)),
+          ) ?? null)
         : null;
 
     // ── Command view ──
@@ -407,28 +463,31 @@ export function StepInspector() {
             </InspectorSection>
 
             <InspectorSection title="Conditions">
-                <div className="p-3 flex flex-col gap-2">
-                    {(parentPass?.conditions ?? []).length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                            {parentPass!.conditions.map((c) => (
-                                <span
-                                    key={c}
-                                    className="inline-flex items-center gap-1 bg-zinc-800/60 text-zinc-600 text-xs rounded px-1.5 py-0.5 border border-zinc-700/40"
-                                    title="Inherited from pass — applies to all steps"
-                                >
-                                    {c}
-                                </span>
+                {(() => {
+                    const inferred = inferStepConditions(step.id, pipeline);
+                    if (inferred.length === 0) {
+                        return <div className="px-3 py-2 text-[10px] text-zinc-600 italic">Always active — no conditions apply.</div>;
+                    }
+                    const kindCls: Record<InferredCondition["sourceKind"], string> = {
+                        pass:     "bg-blue-900/30 text-blue-300 border-blue-700/40",
+                        fallback: "bg-zinc-800/60 text-zinc-500 border-zinc-700/40",
+                        variant:  "bg-violet-900/30 text-violet-300 border-violet-700/40",
+                        ifBlock:  "bg-purple-900/30 text-purple-300 border-purple-700/40",
+                        enableIf: "bg-teal-900/30 text-teal-300 border-teal-700/40",
+                    };
+                    return (
+                        <div className="px-3 py-2 flex flex-col gap-1.5">
+                            {inferred.map((ic, i) => (
+                                <div key={i} className="flex items-center gap-2">
+                                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${kindCls[ic.sourceKind]}`}>
+                                        {ic.condition}
+                                    </span>
+                                    <span className="text-[10px] text-zinc-600">{ic.source}</span>
+                                </div>
                             ))}
                         </div>
-                    )}
-                    <TagsInput
-                        values={step.conditions.filter(
-                            (c) => !(parentPass?.conditions ?? []).includes(c),
-                        )}
-                        onChange={(v) => u({ conditions: v })}
-                        placeholder="Add condition flag"
-                    />
-                </div>
+                    );
+                })()}
             </InspectorSection>
         </div>
     );

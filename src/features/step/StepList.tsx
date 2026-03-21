@@ -2,12 +2,14 @@ import { useState } from 'react';
 import {
   DndContext,
   closestCenter,
+  rectIntersection,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
   useDroppable,
   type DragEndEvent,
+  type CollisionDetection,
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -57,6 +59,56 @@ function parseBranchContainerId(cid: string): { ifBlockId: StepId; branch: 'then
   return { ifBlockId: rest.slice(0, sep), branch: rest.slice(sep + 2) as 'then' | 'else' };
 }
 
+// ─── Condition selector (bool input params + optional negation) ───────────────
+
+function ConditionSelect({
+  condition,
+  accentColor,
+  onChange,
+}: {
+  condition: string;
+  accentColor: 'purple' | 'teal';
+  onChange: (value: string) => void;
+}) {
+  const { resources } = useStore();
+  const boolParams = resources.inputParameters.filter((p) => p.type === 'bool');
+
+  const negated   = condition.startsWith('!');
+  const paramName = negated ? condition.slice(1) : condition;
+
+  const ringCls = accentColor === 'purple' ? 'focus:ring-purple-500/60' : 'focus:ring-teal-500/60';
+  const negBtnActive = accentColor === 'purple'
+    ? 'bg-purple-700/60 text-purple-200 border-purple-600/60'
+    : 'bg-teal-700/60 text-teal-200 border-teal-600/60';
+
+  return (
+    <div className="flex items-center gap-1 flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+      <button
+        title="Negate condition"
+        disabled={!paramName}
+        className={`shrink-0 px-1.5 py-0.5 rounded border text-xs font-mono transition-colors ${
+          negated && paramName
+            ? negBtnActive
+            : 'bg-zinc-800 text-zinc-500 border-zinc-600/50 hover:text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed'
+        }`}
+        onClick={() => paramName && onChange((negated ? '' : '!') + paramName)}
+      >
+        !
+      </button>
+      <select
+        className={`flex-1 min-w-0 bg-zinc-800 border border-zinc-600/60 text-zinc-200 text-xs rounded px-2 py-0.5 font-mono focus:outline-none focus:ring-1 ${ringCls}`}
+        value={paramName}
+        onChange={(e) => onChange((negated ? '!' : '') + e.target.value)}
+      >
+        <option value="">— pick condition —</option>
+        {boolParams.map((p) => (
+          <option key={p.id} value={p.name}>{p.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 // ─── IfBlock branch column ────────────────────────────────────────────────────
 
 interface IfBranchListProps {
@@ -65,7 +117,7 @@ interface IfBranchListProps {
   branch: 'then' | 'else';
   /** accent color for the header */
   color: 'green' | 'orange' | 'teal';
-  label: string;
+  label?: string;
 }
 
 function IfBranchList({ passId, ifBlockId, branch, color, label }: IfBranchListProps) {
@@ -88,10 +140,12 @@ function IfBranchList({ passId, ifBlockId, branch, color, label }: IfBranchListP
   return (
     <div className="flex flex-col min-w-0">
       {/* Branch header */}
-      <div className={`flex items-center gap-2 px-2 py-1 ${headerCls}`}>
-        <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
-        <span className="text-[9px] opacity-50">{stepIds.length} step{stepIds.length !== 1 ? 's' : ''}</span>
-      </div>
+      {label && (
+        <div className={`flex items-center gap-2 px-2 py-1 ${headerCls}`}>
+          <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
+          <span className="text-[9px] opacity-50">{stepIds.length} step{stepIds.length !== 1 ? 's' : ''}</span>
+        </div>
+      )}
       {/* Steps — SortableContext participates in the parent DndContext */}
       {stepIds.length === 0 ? (
         <EmptyDropZone id={containerId} label="Drop here" />
@@ -114,7 +168,7 @@ function IfBranchList({ passId, ifBlockId, branch, color, label }: IfBranchListP
         </SortableContext>
       )}
       {/* Add step */}
-      <div className="relative px-2 py-1 mt-auto border-t border-zinc-800/40">
+      <div className="relative pl-5 pr-2 py-1 mt-auto border-t border-zinc-800/40">
         <button className="text-[10px] text-zinc-500 hover:text-zinc-300 flex items-center gap-1" onClick={() => setShowMenu(!showMenu)}>
           + Add
         </button>
@@ -145,14 +199,12 @@ interface BranchStepRowProps {
   onDelete: () => void;
 }
 
-function BranchStepRow({ passId, stepId, isSelected, onSelect, onDelete }: BranchStepRowProps) {
+function BranchStepRow({ passId: _passId, stepId, isSelected, onSelect, onDelete }: BranchStepRowProps) {
   const { pipeline } = useStore();
   const step = pipeline.steps[stepId];
-  const pass = pipeline.passes[passId];
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stepId });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
   if (!step) return null;
-  const stepOnlyConds = step.conditions.filter((c) => !(pass?.conditions ?? []).includes(c));
   return (
     <div ref={setNodeRef} style={style} onClick={onSelect}
       className={`group flex items-center gap-1.5 pl-5 pr-3 py-1.5 cursor-pointer border-b border-zinc-800/40 hover:bg-zinc-800/30 select-none
@@ -160,11 +212,6 @@ function BranchStepRow({ passId, stepId, isSelected, onSelect, onDelete }: Branc
       <button {...attributes} {...listeners} className="text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>⠿</button>
       <Badge value={step.type} />
       <span className="flex-1 text-xs text-zinc-300 truncate">{step.name}</span>
-      {stepOnlyConds.length > 0 && (
-        <span className="text-[9px] bg-amber-950/60 text-amber-400 border border-amber-800/50 rounded px-1 font-mono leading-4">
-          {stepOnlyConds[0]}{stepOnlyConds.length > 1 ? ` +${stepOnlyConds.length - 1}` : ''}
-        </span>
-      )}
       <div className="hidden group-hover:flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
         <button onClick={onDelete} title="Delete" className="p-0.5 text-zinc-500 hover:text-red-400 rounded text-xs">✕</button>
       </div>
@@ -185,7 +232,6 @@ function IfBlockRow({ passId, stepId, onDelete }: IfBlockRowProps) {
   const step = pipeline.steps[stepId] as IfBlockStep | undefined;
   const isSelected = selectedStepId === stepId;
   const [expanded, setExpanded] = useState(true);
-  const [editingCond, setEditingCond] = useState(false);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stepId });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
@@ -193,10 +239,11 @@ function IfBlockRow({ passId, stepId, onDelete }: IfBlockRowProps) {
   if (!step || step.type !== 'ifBlock') return null;
 
   return (
-    <div ref={setNodeRef} style={style}
+    <div style={style}
       className={`group border-b border-zinc-800/50 border-l-2 ${isSelected ? 'border-l-purple-500' : 'border-l-transparent'}`}>
-      {/* Header */}
-      <div className={`flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-zinc-800/40 ${isSelected ? 'bg-purple-900/20' : ''}`}
+      {/* Header — setNodeRef here so the droppable rect is header-only, not the full block.
+          This lets items dragged from outside naturally target branch items below. */}
+      <div ref={setNodeRef} className={`flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-zinc-800/40 ${isSelected ? 'bg-purple-900/20' : ''}`}
         onClick={() => selectStep(isSelected ? null : stepId)}>
         <button {...attributes} {...listeners} className="text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>⠿</button>
         <button className="text-zinc-500 hover:text-zinc-300 shrink-0 text-xs w-3"
@@ -204,19 +251,11 @@ function IfBlockRow({ passId, stepId, onDelete }: IfBlockRowProps) {
           {expanded ? '▾' : '▸'}
         </button>
         <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider shrink-0">if</span>
-        {editingCond ? (
-          <input autoFocus className="flex-1 bg-zinc-800 border border-purple-600/60 text-zinc-200 text-xs rounded px-2 py-0.5 font-mono focus:outline-none focus:ring-1 focus:ring-purple-500"
-            value={step.condition}
-            onChange={(e) => updateIfBlockCondition(stepId, e.target.value)}
-            onBlur={() => setEditingCond(false)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') setEditingCond(false); }}
-            onClick={(e) => e.stopPropagation()} />
-        ) : (
-          <span className="flex-1 text-xs font-mono text-purple-300/90 truncate cursor-text hover:text-purple-200"
-            onClick={(e) => { e.stopPropagation(); setEditingCond(true); }} title="Click to edit condition">
-            {step.condition || <em className="text-zinc-600 not-italic">click to set condition…</em>}
-          </span>
-        )}
+        <ConditionSelect
+          condition={step.condition}
+          accentColor="purple"
+          onChange={(v) => updateIfBlockCondition(stepId, v)}
+        />
         <div className="hidden group-hover:flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => duplicateStep(passId, stepId)} title="Duplicate" className="p-1 text-zinc-500 hover:text-zinc-200 rounded">⧉</button>
           <button onClick={onDelete} title="Delete" className="p-1 text-zinc-500 hover:text-red-400 rounded">✕</button>
@@ -253,7 +292,6 @@ function EnableIfRow({ passId, stepId, onDelete }: EnableIfRowProps) {
   const step = pipeline.steps[stepId] as EnableIfStep | undefined;
   const isSelected = selectedStepId === stepId;
   const [expanded, setExpanded] = useState(true);
-  const [editingCond, setEditingCond] = useState(false);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stepId });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
@@ -261,10 +299,10 @@ function EnableIfRow({ passId, stepId, onDelete }: EnableIfRowProps) {
   if (!step || step.type !== 'enableIf') return null;
 
   return (
-    <div ref={setNodeRef} style={style}
+    <div style={style}
       className={`group border-b border-zinc-800/50 border-l-2 ${isSelected ? 'border-l-teal-500' : 'border-l-transparent'}`}>
-      {/* Header */}
-      <div className={`flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-zinc-800/40 ${isSelected ? 'bg-teal-900/20' : ''}`}
+      {/* Header — setNodeRef here so the droppable rect is header-only, not the full block. */}
+      <div ref={setNodeRef} className={`flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-zinc-800/40 ${isSelected ? 'bg-teal-900/20' : ''}`}
         onClick={() => selectStep(isSelected ? null : stepId)}>
         <button {...attributes} {...listeners} className="text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>⠿</button>
         <button className="text-zinc-500 hover:text-zinc-300 shrink-0 text-xs w-3"
@@ -272,19 +310,11 @@ function EnableIfRow({ passId, stepId, onDelete }: EnableIfRowProps) {
           {expanded ? '▾' : '▸'}
         </button>
         <span className="text-[10px] font-bold text-teal-400 uppercase tracking-wider shrink-0">enable if</span>
-        {editingCond ? (
-          <input autoFocus className="flex-1 bg-zinc-800 border border-teal-600/60 text-zinc-200 text-xs rounded px-2 py-0.5 font-mono focus:outline-none focus:ring-1 focus:ring-teal-500"
-            value={step.condition}
-            onChange={(e) => updateIfBlockCondition(stepId, e.target.value)}
-            onBlur={() => setEditingCond(false)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') setEditingCond(false); }}
-            onClick={(e) => e.stopPropagation()} />
-        ) : (
-          <span className="flex-1 text-xs font-mono text-teal-300/90 truncate cursor-text hover:text-teal-200"
-            onClick={(e) => { e.stopPropagation(); setEditingCond(true); }} title="Click to edit condition">
-            {step.condition || <em className="text-zinc-600 not-italic">click to set condition…</em>}
-          </span>
-        )}
+        <ConditionSelect
+          condition={step.condition}
+          accentColor="teal"
+          onChange={(v) => updateIfBlockCondition(stepId, v)}
+        />
         <div className="hidden group-hover:flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => duplicateStep(passId, stepId)} title="Duplicate" className="p-1 text-zinc-500 hover:text-zinc-200 rounded">⧉</button>
           <button onClick={onDelete} title="Delete" className="p-1 text-zinc-500 hover:text-red-400 rounded">✕</button>
@@ -293,8 +323,8 @@ function EnableIfRow({ passId, stepId, onDelete }: EnableIfRowProps) {
 
       {/* Single branch */}
       {expanded && (
-        <div className="border-t border-teal-900/20">
-          <IfBranchList passId={passId} ifBlockId={stepId} branch="then" color="teal" label="when true" />
+        <div className="border-t border-teal-900/20 border-l-4 border-l-teal-700/50">
+          <IfBranchList passId={passId} ifBlockId={stepId} branch="then" color="teal" />
         </div>
       )}
     </div>
@@ -310,13 +340,10 @@ interface StepRowProps {
   onDuplicate: () => void;
 }
 
-function StepRow({ passId, stepId, onDelete, onDuplicate }: StepRowProps) {
+function StepRow({ passId: _passId, stepId, onDelete, onDuplicate }: StepRowProps) {
   const { pipeline, selectedStepId, selectStep } = useStore();
   const step = pipeline.steps[stepId];
-  const pass = pipeline.passes[passId];
   const isSelected = selectedStepId === stepId;
-  const stepOnlyConds = step?.conditions.filter((c) => !(pass?.conditions ?? []).includes(c)) ?? [];
-
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stepId });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
 
@@ -329,14 +356,6 @@ function StepRow({ passId, stepId, onDelete, onDuplicate }: StepRowProps) {
       <button {...attributes} {...listeners} className="text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>⠿</button>
       <Badge value={step.type} />
       <span className="flex-1 text-sm text-zinc-200 truncate">{step.name}</span>
-      {stepOnlyConds.length > 0 && (
-        <div className="flex items-center gap-0.5 shrink-0">
-          {stepOnlyConds.slice(0, 2).map((c) => (
-            <span key={c} className="text-[9px] bg-amber-950/60 text-amber-400 border border-amber-800/50 rounded px-1 font-mono leading-4">{c}</span>
-          ))}
-          {stepOnlyConds.length > 2 && <span className="text-[9px] text-amber-600/70 font-mono">+{stepOnlyConds.length - 2}</span>}
-        </div>
-      )}
       <div className="hidden group-hover:flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
         <button onClick={onDuplicate} title="Duplicate" className="p-1 text-zinc-500 hover:text-zinc-200 rounded">⧉</button>
         <button onClick={onDelete}    title="Delete"    className="p-1 text-zinc-500 hover:text-red-400 rounded">✕</button>
@@ -368,6 +387,39 @@ function EmptyDropZone({ id, label }: { id: string; label: string }) {
     </div>
   );
 }
+
+// ─── Collision detection ──────────────────────────────────────────────────────
+
+/**
+ * When dragging a step that lives inside a branch (ifBlock / enableIf), prefer
+ * drop targets within the SAME branch using rect-intersection (requires actual
+ * overlap).  This prevents the outer IfBlockRow / EnableIfRow sortable — which
+ * spans the entire height of its content — from winning the closestCenter race
+ * and causing an accidental "move out of branch" drop.
+ *
+ * If no branch items intersect (user has dragged outside the branch area), fall
+ * back to global closestCenter so cross-container drops still work.
+ */
+const branchAwareCollision: CollisionDetection = (args) => {
+  const activeContainerId = args.active.data.current?.sortable?.containerId as string | undefined;
+
+  // When dragging FROM inside a branch, prefer items in the SAME branch via rect
+  // intersection. Without this, the outer IfBlockRow/EnableIfRow sortable (whose
+  // droppable rect covers its header only — see setNodeRef placement) would still
+  // win closestCenter for same-branch reorders when the header happens to be closer.
+  if (activeContainerId?.startsWith(BRANCH_PREFIX)) {
+    const sameBranch = args.droppableContainers.filter((c) => {
+      const cid = (c.data.current?.sortable?.containerId ?? c.id) as string;
+      return cid === activeContainerId || c.id === activeContainerId;
+    });
+    if (sameBranch.length > 0) {
+      const inner = rectIntersection({ ...args, droppableContainers: sameBranch });
+      if (inner.length > 0) return inner;
+    }
+  }
+
+  return closestCenter(args);
+};
 
 // ─── Step list ────────────────────────────────────────────────────────────────
 
@@ -538,30 +590,30 @@ export function StepList({ passId, variants, activeVariantId, onVariantChange }:
 
   return (
     <div className="flex flex-col">
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+      <DndContext sensors={sensors} collisionDetection={branchAwareCollision} onDragEnd={onDragEnd}>
 
         {/* ── Common / Active Steps ── */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700/60">
-          <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-            {hasVariants ? 'Common Steps' : 'Active Steps'} ({commonIds.length})
-          </span>
-          <div className="relative">
-            <Button variant="ghost" size="sm" onClick={() => setShowCommonMenu(!showCommonMenu)}>+ Add Step</Button>
-            {showCommonMenu && (
-              <div className="absolute right-0 top-full mt-1 z-50 bg-zinc-800 border border-zinc-600 rounded shadow-xl w-52 overflow-hidden">
-                <div className="max-h-72 overflow-y-auto">
-                  {STEP_TYPES.map(({ type, label }) => (
-                    <button key={type} className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
-                      onClick={() => { addStep(passId, type); setShowCommonMenu(false); }}>
-                      <Badge value={type} /><span>{label}</span>
-                    </button>
-                  ))}
+        <div className="border-l-2 border-blue-600/40">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700/60 bg-blue-950/20">
+            <span className="text-xs font-semibold text-blue-300/80 uppercase tracking-wider">
+              {hasVariants ? 'Common Steps' : 'Active Steps'} ({commonIds.length})
+            </span>
+            <div className="relative">
+              <Button variant="ghost" size="sm" onClick={() => setShowCommonMenu(!showCommonMenu)}>+ Add Step</Button>
+              {showCommonMenu && (
+                <div className="absolute right-0 top-full mt-1 z-50 bg-zinc-800 border border-zinc-600 rounded shadow-xl w-52 overflow-hidden">
+                  <div className="max-h-72 overflow-y-auto">
+                    {STEP_TYPES.map(({ type, label }) => (
+                      <button key={type} className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 flex items-center gap-2"
+                        onClick={() => { addStep(passId, type); setShowCommonMenu(false); }}>
+                        <Badge value={type} /><span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-        <div>
           {commonIds.length === 0 ? (
             <EmptyDropZone id={CONTAINER_ACTIVE} label="No steps — drop here or click Add Step" />
           ) : (
@@ -575,28 +627,30 @@ export function StepList({ passId, variants, activeVariantId, onVariantChange }:
 
         {/* ── Variant Steps ── */}
         {variants && variants.length > 0 && (
-          <div className="border-t-2 border-zinc-700/50">
-            {/* Tabs */}
-            <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-zinc-800/50 bg-violet-950/10">
-              {variants.map((v) => (
-                <button
-                  key={v.id}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors border ${
-                    activeVariantId === v.id
-                      ? 'bg-violet-600/80 text-white border-violet-500/60 shadow-sm'
-                      : 'bg-zinc-800/80 text-zinc-400 border-zinc-600/50 hover:text-zinc-200 hover:bg-zinc-700 hover:border-zinc-500/60'
-                  }`}
-                  onClick={() => onVariantChange?.(v.id)}
-                >
-                  {v.name}
-                </button>
-              ))}
+          <div className="mt-2 border-l-2 border-violet-600/50">
+            {/* Tabs row */}
+            <div className="px-3 py-2 bg-violet-950/30 border-b border-violet-800/50">
+              <div className="text-[9px] font-bold text-violet-400/50 uppercase tracking-widest mb-2">Variant</div>
+              <div className="flex flex-wrap gap-3">
+                {variants.map((v) => (
+                  <button
+                    key={v.id}
+                    onClick={() => onVariantChange?.(v.id)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+                      activeVariantId === v.id
+                        ? 'bg-violet-600 text-white shadow'
+                        : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300'
+                    }`}
+                  >
+                    {v.name}
+                  </button>
+                ))}
+              </div>
             </div>
-            {/* Variant step list header */}
             {activeVariant ? (
               <>
-                <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700/60 bg-violet-950/5">
-                  <span className="text-xs font-semibold text-violet-400/80 uppercase tracking-wider">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-violet-900/40 bg-violet-950/20">
+                  <span className="text-xs font-semibold text-violet-300/80 uppercase tracking-wider">
                     {activeVariant.name} Steps ({variantIds.length})
                   </span>
                   <div className="relative">
@@ -634,8 +688,8 @@ export function StepList({ passId, variants, activeVariantId, onVariantChange }:
         )}
 
         {/* ── Fallback Steps ── */}
-        <div className="border-t-2 border-zinc-700/50">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700/60 bg-zinc-900/40">
+        <div className="mt-2 border-l-2 border-zinc-500/30">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700/60 bg-zinc-800/40">
             <button className="flex items-center gap-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider hover:text-zinc-300"
               onClick={() => setFallbackCollapsed(!fallbackCollapsed)}>
               <span className="text-[9px]">{fallbackCollapsed ? '▸' : '▾'}</span>
