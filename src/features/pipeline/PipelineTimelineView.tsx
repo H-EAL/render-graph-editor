@@ -393,9 +393,11 @@ export function PipelineTimelineView() {
         addRenderTarget,
         addBuffer,
         addInputParameter,
+        addMaterialInterface,
         deleteRenderTarget,
         deleteBuffer,
         deleteInputParameter,
+        deleteMaterialInterface,
         hiddenResourceIds,
         toggleResourceVisibility,
         hideOthers,
@@ -689,6 +691,10 @@ export function PipelineTimelineView() {
         () => new Map(resources.inputParameters.map((p) => [p.id, p])),
         [resources],
     );
+    const miMap = useMemo(
+        () => new Map((resources.materialInterfaces ?? []).map((m) => [m.id, m])),
+        [resources],
+    );
 
     // Evaluate a pass's conditions against controllerValues.
     // Returns "active" if all defined conditions are true, "fallback" if any is false, null if any is unset.
@@ -786,8 +792,9 @@ export function PipelineTimelineView() {
                 ...resources.buffers.map((b) => b.id),
                 ...resources.inputParameters.map((p) => p.id),
                 ...resources.blendStates.map((bs) => bs.id),
+                ...(resources.materialInterfaces ?? []).map((m) => m.id),
             ]),
-        [resources.renderTargets, resources.buffers, resources.inputParameters, resources.blendStates],
+        [resources.renderTargets, resources.buffers, resources.inputParameters, resources.blendStates, resources.materialInterfaces],
     );
 
     const overlayRows = useMemo(() => {
@@ -836,6 +843,7 @@ export function PipelineTimelineView() {
         const paramIds = new Set(resources.inputParameters.map((p) => p.id));
         const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
         const bsIds = new Set(resources.blendStates.map((bs) => bs.id));
+        const miIds = new Set((resources.materialInterfaces ?? []).map((m) => m.id));
         return new Map(
             overlayRows.map((rid) => {
                 if (paramIds.has(rid)) {
@@ -859,8 +867,8 @@ export function PipelineTimelineView() {
                     }
                     return [rid, map] as const;
                 }
-                if (bsIds.has(rid)) {
-                    // Blend states: "read" for every pass that references them in commands/attachments
+                if (bsIds.has(rid) || miIds.has(rid)) {
+                    // Blend states / material interfaces: "read" for every pass that references them
                     const map = new Map<PassId, AccessKind>();
                     const usage = usageMapEarly.get(rid);
                     for (const { passId } of usage?.readers ?? []) map.set(passId, "read");
@@ -877,7 +885,7 @@ export function PipelineTimelineView() {
                 return [rid, map] as const;
             }),
         );
-    }, [overlayRows, pipeline, resources.inputParameters, resources.blendStates, passInferredReads, passInferredResources, passStepInputRefs, usageMapEarly]);
+    }, [overlayRows, pipeline, resources.inputParameters, resources.blendStates, resources.materialInterfaces, passInferredReads, passInferredResources, passStepInputRefs, usageMapEarly]);
 
     // Focused layout: per-timeline linear layout, compressing non-relevant passes into ellipsis nodes
     type EllipsisNode = { count: number; x: number; y: number };
@@ -1019,6 +1027,8 @@ export function PipelineTimelineView() {
             ...resources.renderTargets.map((r) => r.id),
             ...resources.buffers.map((b) => b.id),
             ...resources.inputParameters.map((p) => p.id),
+            ...resources.blendStates.map((bs) => bs.id),
+            ...(resources.materialInterfaces ?? []).map((m) => m.id),
         ];
         for (const rid of allIds) {
             // Input parameters: unused if no pass condition references them
@@ -1035,7 +1045,7 @@ export function PipelineTimelineView() {
             }
         }
         return unused;
-    }, [resources.renderTargets, resources.buffers, resources.inputParameters, usageMap, rtMap, paramMap, usedParamIds]);
+    }, [resources.renderTargets, resources.buffers, resources.inputParameters, resources.blendStates, resources.materialInterfaces, usageMap, rtMap, paramMap, usedParamIds]);
 
     // Resources that are read by at least one pass before any same-timeline write.
     // Cross-timeline writers are considered valid prior writes (semaphore-ordered).
@@ -1175,13 +1185,15 @@ export function PipelineTimelineView() {
         const rt = resources.renderTargets.find((r) => r.id === rid);
         const buf = resources.buffers.find((b) => b.id === rid);
         const param = resources.inputParameters.find((p) => p.id === rid);
-        const name = rt?.name ?? buf?.name ?? param?.name ?? rid;
+        const mi = (resources.materialInterfaces ?? []).find((m) => m.id === rid);
+        const name = rt?.name ?? buf?.name ?? param?.name ?? mi?.name ?? rid;
         if (!window.confirm(`Delete "${name}"?`)) return;
         setContextMenu(null);
         if (selectedResourceId === rid) selectResource(null);
         if (rt) deleteRenderTarget(rid);
         else if (buf) deleteBuffer(rid);
         else if (param) deleteInputParameter(rid);
+        else if (mi) deleteMaterialInterface(rid);
     };
     const bringToTop = (rid: ResourceId) => {
         setResourceOrder([rid, ...resourceOrder.filter((id) => id !== rid)]);
@@ -1255,6 +1267,12 @@ export function PipelineTimelineView() {
         let i = 1;
         while (existingNames.has(name)) name = `NewParam${i++}`;
         addInputParameter({ id, name, type: "float", defaultValue: "0.0" });
+        selectResource(id);
+        setAddResPos(null);
+    };
+    const createMaterialInterface = () => {
+        const id = newId();
+        addMaterialInterface({ id, name: "NewMaterialInterface", inputs: [] });
         selectResource(id);
         setAddResPos(null);
     };
@@ -1560,6 +1578,12 @@ export function PipelineTimelineView() {
         const writing = new Set<PassId>();
         const reading = new Set<PassId>();
         for (const rid of selectedResourceIds) {
+            // For blend states and material interfaces, use the precomputed access map
+            const accessMap = allAccessMaps.get(rid);
+            if (accessMap) {
+                for (const passId of accessMap.keys()) reading.add(passId);
+                continue;
+            }
             const paramName = paramIdToName.get(rid);
             for (const pass of Object.values(pipeline.passes)) {
                 const { reads: r, writes: w } = inferPassResources(
@@ -1576,7 +1600,7 @@ export function PipelineTimelineView() {
             }
         }
         return { writingPassIds: writing, readingPassIds: reading };
-    }, [pipeline.passes, selectedResourceIds, resources.inputParameters]);
+    }, [pipeline.passes, pipeline.steps, selectedResourceIds, resources.inputParameters, allAccessMaps]);
 
     const topH = PAD_T + pipeline.timelines.length * ROW_H + PAD_B;
     const bottomH = Math.max(filteredRows.length * OVERLAY_H + 8, 4);
@@ -2229,8 +2253,8 @@ export function PipelineTimelineView() {
                                             </div>
                                         )}
 
-                                        {/* Step chips — below node */}
-                                        {pass.steps.length > 0 && (
+                                        {/* Step chips + variants pill — below node */}
+                                        {(pass.steps.length > 0 || (pass.variants?.length ?? 0) > 0) && (
                                             <div
                                                 className="absolute flex items-center gap-0.5 overflow-hidden"
                                                 style={{
@@ -2259,6 +2283,14 @@ export function PipelineTimelineView() {
                                                 {pass.steps.length > 6 && (
                                                     <span className="text-[8px] text-zinc-600 font-mono shrink-0">
                                                         +{pass.steps.length - 6}
+                                                    </span>
+                                                )}
+                                                {(pass.variants?.length ?? 0) > 0 && (
+                                                    <span
+                                                        title={`${pass.variants!.length} variant${pass.variants!.length !== 1 ? "s" : ""}`}
+                                                        className="text-[7px] border rounded-sm px-1 leading-[14px] shrink-0 bg-violet-900/40 text-violet-300 border-violet-700/40 font-mono"
+                                                    >
+                                                        var
                                                     </span>
                                                 )}
                                             </div>
@@ -2422,7 +2454,8 @@ export function PipelineTimelineView() {
                                         const bufObj = bufMap.get(rid);
                                         const bsObj = bsMap.get(rid);
                                         const paramObj = paramMap.get(rid);
-                                        const name = paramObj ? paramObj.name : resolveIds([rid]);
+                                        const miObj = miMap.get(rid);
+                                        const name = paramObj ? paramObj.name : miObj ? miObj.name : resolveIds([rid]);
                                         const tooltip = rtObj
                                             ? `${rtObj.name}\nType: Render Target\nFormat: ${rtObj.format}\nSize: ${fmtRTSize(rtObj.width)} × ${fmtRTSize(rtObj.height)}\nMips: ${rtObj.mips}`
                                             : bufObj
@@ -2431,18 +2464,23 @@ export function PipelineTimelineView() {
                                                 ? `${bsObj.name}\nType: Blend State\nBlend: ${bsObj.enabled ? "enabled" : "disabled"}`
                                                 : paramObj
                                                   ? `${paramObj.name}\nType: Input Param (${paramObj.type})\nDefault: ${paramObj.defaultValue}`
-                                                  : name;
+                                                  : miObj
+                                                    ? `${miObj.name}\nType: Material Interface\nInputs: ${miObj.inputs.length}`
+                                                    : name;
                                         const isRT = rtNames.has(rid);
                                         const isBS = !!bsObj;
                                         const isParam = !!paramObj;
-                                        const icon = isRT ? "▣" : isBS ? "⊞" : isParam ? "◈" : "▤";
+                                        const isMI = !!miObj;
+                                        const icon = isRT ? "▣" : isBS ? "⊞" : isParam ? "◈" : isMI ? "◇" : "▤";
                                         const iconCls = isRT
                                             ? "text-blue-400/80"
                                             : isBS
                                               ? "text-pink-400/80"
                                               : isParam
                                                 ? "text-green-400/80"
-                                                : "text-amber-400/80";
+                                                : isMI
+                                                  ? "text-teal-400/80"
+                                                  : "text-amber-400/80";
                                         const isDead = deadWriteIds.has(rid);
                                         const isUnused = unusedIds.has(rid);
                                         return (
@@ -3034,6 +3072,12 @@ export function PipelineTimelineView() {
                         onClick={createInputParam}
                     >
                         ◆ Input Param
+                    </button>
+                    <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-teal-300 hover:bg-zinc-700 font-mono"
+                        onClick={createMaterialInterface}
+                    >
+                        ◇ Material Interface
                     </button>
                 </div>
             )}

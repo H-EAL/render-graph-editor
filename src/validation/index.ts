@@ -182,14 +182,6 @@ export function validateDocument(
                         location: step.name,
                     });
                 }
-                if (ca.blendState && !allResourceIds.has(ca.blendState)) {
-                    issues.push({
-                        id: newId(),
-                        severity: "warning",
-                        message: `Step "${step.name}" color attachment references unknown blend state "${ca.blendState}"`,
-                        location: step.name,
-                    });
-                }
             }
             if (
                 raster.attachments.depthAttachment?.target &&

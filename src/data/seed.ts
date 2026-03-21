@@ -1,6 +1,7 @@
 import type { PipelineDocument } from "../types";
 import rawSeed from "../assets/newrg.json";
 import rawRg from "../assets/rg.json";
+import rawSimplified from "../assets/rg-simplified.json";
 import rawShowcase from "../assets/showcase.json";
 import { importRgJson } from "../utils/importRg";
 
@@ -9,6 +10,7 @@ export const showcaseDocument: PipelineDocument = rawShowcase as unknown as Pipe
 
 // Pre-converted native rg.json bundled as an example
 export const rgDocument: PipelineDocument = importRgJson(rawRg);
+export const simplifiedDocument: PipelineDocument = importRgJson(rawSimplified);
 
 // ─── Deferred Rendering — 2-timeline example ──────────────────────────────────
 
@@ -274,7 +276,6 @@ export const deferredSeed: PipelineDocument = {
                             loadOp: "load",
                             storeOp: "store",
                             clearValue: [0, 0, 0, 0],
-                            blendState: "bs-alpha",
                         },
                     ],
                 },
@@ -493,6 +494,7 @@ export const deferredSeed: PipelineDocument = {
             { id: "ip-ui", name: "showUI", type: "bool", defaultValue: "true" },
             { id: "ip-particles", name: "particlesEnabled", type: "bool", defaultValue: "false" },
         ],
+        materialInterfaces: [],
     },
 };
 
@@ -513,6 +515,7 @@ export const emptyDocument: PipelineDocument = {
         blendStates: [],
         shaders: [],
         inputParameters: [],
+        materialInterfaces: [],
     },
 };
 
@@ -523,6 +526,7 @@ export const examples = [
     { id: "showcase", label: "Showcase", doc: showcaseDocument },
     { id: "newrg", label: "newrg", doc: seedDocument },
     { id: "rg", label: "rg.json", doc: rgDocument },
+    { id: "simplified", label: "rg-simplified.json", doc: simplifiedDocument },
     { id: "deferred", label: "Deferred", doc: deferredSeed },
 ] as const;
 

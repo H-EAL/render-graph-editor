@@ -517,6 +517,18 @@ export function InputInspector({ definition: def, definitions, onChange }: Input
                         <span className="text-[11px] text-zinc-300">Advanced</span>
                         <span className="text-[10px] text-zinc-600">Hidden by default in the form</span>
                     </label>
+                    {def.kind === "bool" && (
+                        <label className="flex items-center gap-2 cursor-pointer mt-1.5" title="Controls whether its category is enabled in the preview">
+                            <input
+                                type="checkbox"
+                                checked={!!def.categoryToggle}
+                                onChange={(e) => u({ categoryToggle: e.target.checked || undefined })}
+                                className="rounded accent-blue-500"
+                            />
+                            <span className="text-[11px] text-zinc-300">Category toggle</span>
+                            <span className="text-[10px] text-zinc-600">Controls its category in the preview</span>
+                        </label>
+                    )}
                 </div>
 
                 {/* ── Conditions ───────────────────────────────────────────── */}

@@ -17,6 +17,7 @@ type CategoryNode = {
     path: string[];
     children: TreeNode[];
     inputCount: number; // total inputs under this subtree
+    hasToggle: boolean; // a direct bool child has categoryToggle: true
 };
 
 type InputLeaf = {
@@ -51,7 +52,8 @@ function buildTree(definitions: InputDefinition[]): TreeNode[] {
             const childPath = [...path, name];
             const children = toNodes(child, childPath);
             const inputCount = countInputs(child);
-            nodes.push({ kind: "category", name, path: childPath, children, inputCount });
+            const hasToggle = child.inputs.some((d) => d.categoryToggle && d.kind === "bool");
+            nodes.push({ kind: "category", name, path: childPath, children, inputCount, hasToggle });
         }
         for (const def of map.inputs) {
             nodes.push({ kind: "input", def });
@@ -139,6 +141,7 @@ function InputRow({
     def,
     selected,
     isController,
+    isCategoryToggle,
     onSelect,
     onDelete,
     onRename,
@@ -150,6 +153,7 @@ function InputRow({
     def: InputDefinition;
     selected: boolean;
     isController: boolean;
+    isCategoryToggle: boolean;
     onSelect: () => void;
     onDelete: () => void;
     onRename: (label: string) => void;
@@ -222,6 +226,11 @@ function InputRow({
             {/* Badges */}
             <div className="flex items-center gap-0.5 shrink-0">
                 <KindBadge kind={def.kind} />
+                {isCategoryToggle && (
+                    <span className="text-[8px] rounded px-1 py-0 border bg-blue-900/30 text-blue-400 border-blue-700/40" title="Category toggle: controls its category in the preview">
+                        cat
+                    </span>
+                )}
                 {isController && (
                     <span className="text-[8px] rounded px-1 py-0 border bg-amber-900/30 text-amber-400 border-amber-700/40" title="Controller: referenced by other inputs">
                         ctrl
@@ -287,6 +296,14 @@ function CategoryRow({
         >
             <span className="text-[9px] text-zinc-600">{expanded ? "▼" : "▶"}</span>
             <span className="flex-1 truncate">{node.name}</span>
+            {node.hasToggle && (
+                <span
+                    className="text-[8px] rounded px-1 py-0 border bg-blue-900/30 text-blue-400 border-blue-700/40 font-normal normal-case tracking-normal"
+                    title="This category has a toggle bool"
+                >
+                    toggle
+                </span>
+            )}
             <span className="text-[9px] text-zinc-600 font-normal normal-case tracking-normal">
                 {node.inputCount}
             </span>
@@ -337,6 +354,7 @@ function TreeNodes({
                                 def={node.def}
                                 selected={selectedId === node.def.id}
                                 isController={controllerIds.has(node.def.id)}
+                                isCategoryToggle={!!(node.def.categoryToggle && node.def.kind === "bool")}
                                 onSelect={() => onSelect(node.def.id)}
                                 onDelete={() => onDelete(node.def.id)}
                                 onRename={(label) => onRename(node.def.id, label)}

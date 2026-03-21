@@ -28,6 +28,7 @@ import type {
     BlendState,
     Shader,
     InputParameter,
+    MaterialInterface,
     ResourceId,
     InputDefinition,
     InputId,
@@ -88,9 +89,18 @@ function makeDefaultCommand(type: RasterCommandType): RasterCommand {
                 type,
                 name: "Draw Batch",
                 shader: "",
-                depthTest: true,
-                depthWrite: true,
-                cullMode: "back",
+                batchFilters: [{ id: newId(), flags: 0 }],
+                pipelineConfigs: [{
+                    id: newId(),
+                    cullMode: "back",
+                    depthTestEnable: true,
+                    depthWriteEnable: true,
+                    depthCompareOp: "greater",
+                    topology: "triangleList",
+                    polygonMode: "fill",
+                    frontFace: "counterClockwise",
+                    depthBiasEnable: false,
+                }],
             };
     }
 }
@@ -174,6 +184,7 @@ function resourceOrderFromLibrary(resources: ResourceLibrary): ResourceId[] {
         ...resources.buffers.map((b) => b.id),
         ...resources.inputParameters.map((p) => p.id),
         ...resources.blendStates.map((bs) => bs.id),
+        ...(resources.materialInterfaces ?? []).map((m) => m.id),
     ];
 }
 
@@ -303,6 +314,10 @@ export interface AppState {
     updateInputParameter: (id: ResourceId, patch: Partial<InputParameter>) => void;
     deleteInputParameter: (id: ResourceId) => void;
 
+    addMaterialInterface: (mi: MaterialInterface) => void;
+    updateMaterialInterface: (id: ResourceId, patch: Partial<MaterialInterface>) => void;
+    deleteMaterialInterface: (id: ResourceId) => void;
+
     toggleResourceVisibility: (id: ResourceId) => void;
     hideOthers: (id: ResourceId) => void;
     showAllResources: () => void;
@@ -321,48 +336,9 @@ export interface AppState {
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
-// ─── Seed input definitions (from rg.json inputDescriptor) ───────────────────
+// ─── Seed input definitions (from rg.json via importer) ───────────────────────
 
-type RgInputEntry = {
-    name: string;
-    type: string;
-    nativeType: string;
-    default: unknown;
-    description?: string;
-    categories: string[];
-    id?: number;
-    properties?: { isHidden?: boolean; isMandatory?: boolean };
-};
-
-function rgTypeToKind(type: string): InputDefinition["kind"] {
-    switch (type) {
-        case "bool": return "bool";
-        case "float": return "float";
-        case "uint": return "int";
-        case "color": return "color";
-        case "vec3": return "vec3";
-        default: return "float";
-    }
-}
-
-function camelToLabel(name: string): string {
-    return name
-        .replace(/([A-Z])/g, " $1")
-        .replace(/^./, (s) => s.toUpperCase())
-        .trim();
-}
-
-const defaultInputDefinitions: InputDefinition[] = (
-    (rawRg as { inputDescriptor: RgInputEntry[] }).inputDescriptor
-).map((entry) => ({
-    id: entry.name,
-    label: camelToLabel(entry.name),
-    description: entry.description,
-    kind: rgTypeToKind(entry.type),
-    defaultValue: entry.default,
-    categoryPath: entry.categories,
-    advanced: false,
-}));
+const defaultInputDefinitions: InputDefinition[] = rgDocument.inputDefinitions ?? [];
 
 function firstPassId(pipeline: Pipeline): PassId | null {
     for (const tl of pipeline.timelines) {
@@ -690,8 +666,42 @@ export const useStore = create<AppState>()(
             set((s) => {
                 const pass = s.pipeline.passes[passId];
                 if (!pass) return {};
-                const toDelete = collectAllStepIds(stepId, s.pipeline.steps);
+                const step = s.pipeline.steps[stepId];
                 const steps = { ...s.pipeline.steps };
+
+                const spliceInPlace = (list: StepId[], id: StepId, replacements: StepId[]) => {
+                    const idx = list.indexOf(id);
+                    return idx >= 0
+                        ? [...list.slice(0, idx), ...replacements, ...list.slice(idx + 1)]
+                        : list.filter((sid) => sid !== id);
+                };
+
+                if (step?.type === "enableIf") {
+                    const children = (step as EnableIfStep).thenSteps;
+                    delete steps[stepId];
+                    return {
+                        pipeline: {
+                            ...s.pipeline,
+                            passes: {
+                                ...s.pipeline.passes,
+                                [passId]: {
+                                    ...pass,
+                                    steps: spliceInPlace(pass.steps, stepId, children),
+                                    disabledSteps: spliceInPlace(pass.disabledSteps ?? [], stepId, children),
+                                    variants: (pass.variants ?? []).map((v) => ({
+                                        ...v,
+                                        activeSteps: spliceInPlace(v.activeSteps, stepId, children),
+                                    })),
+                                },
+                            },
+                            steps,
+                        },
+                        selectedStepId: s.selectedStepId === stepId ? null : s.selectedStepId,
+                        selectedCommandId: s.selectedStepId === stepId ? null : s.selectedCommandId,
+                    };
+                }
+
+                const toDelete = collectAllStepIds(stepId, s.pipeline.steps);
                 toDelete.forEach((sid) => delete steps[sid]);
                 return {
                     pipeline: {
@@ -1267,8 +1277,25 @@ export const useStore = create<AppState>()(
                 if (!ifStep || (ifStep.type !== "ifBlock" && ifStep.type !== "enableIf")) return {};
                 const key = branch === "then" ? "thenSteps" : "elseSteps";
                 const current = ((ifStep as unknown as Record<string, unknown>)[key] as StepId[]) ?? [];
-                const toDelete = collectAllStepIds(stepId, s.pipeline.steps);
+                const step = s.pipeline.steps[stepId];
                 const steps = { ...s.pipeline.steps };
+
+                if (step?.type === "enableIf") {
+                    const children = (step as EnableIfStep).thenSteps;
+                    const idx = current.indexOf(stepId);
+                    const newBranch = idx >= 0
+                        ? [...current.slice(0, idx), ...children, ...current.slice(idx + 1)]
+                        : current.filter((sid) => sid !== stepId);
+                    delete steps[stepId];
+                    steps[ifBlockId] = { ...ifStep, [key]: newBranch };
+                    return {
+                        pipeline: { ...s.pipeline, steps },
+                        selectedStepId: s.selectedStepId === stepId ? null : s.selectedStepId,
+                        selectedCommandId: s.selectedStepId === stepId ? null : s.selectedCommandId,
+                    };
+                }
+
+                const toDelete = collectAllStepIds(stepId, s.pipeline.steps);
                 toDelete.forEach((sid) => delete steps[sid]);
                 steps[ifBlockId] = { ...ifStep, [key]: current.filter((sid) => sid !== stepId) };
                 return {
@@ -1683,6 +1710,31 @@ export const useStore = create<AppState>()(
                 selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
             })),
 
+        addMaterialInterface: (mi) =>
+            set((s) => ({
+                resources: {
+                    ...s.resources,
+                    materialInterfaces: [...s.resources.materialInterfaces, mi],
+                },
+            })),
+        updateMaterialInterface: (id, patch) =>
+            set((s) => ({
+                resources: {
+                    ...s.resources,
+                    materialInterfaces: s.resources.materialInterfaces.map((m) =>
+                        m.id === id ? { ...m, ...patch } : m,
+                    ),
+                },
+            })),
+        deleteMaterialInterface: (id) =>
+            set((s) => ({
+                resources: {
+                    ...s.resources,
+                    materialInterfaces: s.resources.materialInterfaces.filter((m) => m.id !== id),
+                },
+                selectedResourceId: s.selectedResourceId === id ? null : s.selectedResourceId,
+            })),
+
         // ── Input Definitions ─────────────────────────────────────────────────
         addInputDefinition: (patch) =>
             set((s) => ({
@@ -1718,14 +1770,19 @@ export const useStore = create<AppState>()(
         loadDocument: (json) => {
             try {
                 const doc = JSON.parse(json);
+                const resources: ResourceLibrary = {
+                    materialInterfaces: [],
+                    ...doc.resources,
+                };
                 set({
                     pipeline: doc.pipeline,
-                    resources: doc.resources,
+                    resources,
+                    inputDefinitions: doc.inputDefinitions ?? defaultInputDefinitions,
                     selectedPassId: null,
                     selectedStepId: null,
                     selectedCommandId: null,
                     selectedResourceId: null,
-                    resourceOrder: resourceOrderFromLibrary(doc.resources),
+                    resourceOrder: resourceOrderFromLibrary(resources),
                 });
                 void get().resolveShaderNames();
             } catch (e) {

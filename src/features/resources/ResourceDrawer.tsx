@@ -5,7 +5,7 @@ import { Select } from "../../components/ui/Select";
 import { getResourceUsage } from "../../utils/dependencyGraph";
 import { buildInputPassUsage } from "../../utils/inputCondition";
 import { InputInspector } from "../inputs/InputInspector";
-import type { TextureFormat, ShaderStage, BlendFactor, BlendOp } from "../../types";
+import type { TextureFormat, ShaderStage, BlendFactor, BlendOp, MaterialInputType } from "../../types";
 
 // ─── Option lists ─────────────────────────────────────────────────────────────
 
@@ -103,6 +103,8 @@ export function ResourceDrawer() {
         deleteShader,
         updateInputDefinition,
         deleteInputParameter,
+        updateMaterialInterface,
+        deleteMaterialInterface,
     } = useStore();
 
     const rid = selectedResourceId;
@@ -112,8 +114,9 @@ export function ResourceDrawer() {
     const bs = rid ? resources.blendStates.find((b) => b.id === rid) : undefined;
     const sh = rid ? resources.shaders.find((s) => s.id === rid) : undefined;
     const param = rid ? resources.inputParameters.find((p) => p.id === rid) : undefined;
+    const mi = rid ? resources.materialInterfaces.find((m) => m.id === rid) : undefined;
 
-    const resource = rt ?? buf ?? bs ?? sh ?? param;
+    const resource = rt ?? buf ?? bs ?? sh ?? param ?? mi;
 
     const usageMap = useMemo(() => getResourceUsage(pipeline), [pipeline]);
     const usage = rid ? usageMap.get(rid) : undefined;
@@ -138,8 +141,10 @@ export function ResourceDrawer() {
               ? "Shader"
               : param
                 ? "Input Param"
-                : "Unknown";
-    const typeIcon = rt ? "▣" : buf ? "▤" : bs ? "⊞" : sh ? "◈" : "◆";
+                : mi
+                  ? "Material Interface"
+                  : "Unknown";
+    const typeIcon = rt ? "▣" : buf ? "▤" : bs ? "⊞" : sh ? "◈" : mi ? "◇" : "◆";
     const typeCls = rt
         ? "text-blue-400"
         : buf
@@ -148,7 +153,9 @@ export function ResourceDrawer() {
             ? "text-pink-400"
             : sh
               ? "text-purple-400"
-              : "text-zinc-400";
+              : mi
+                ? "text-teal-400"
+                : "text-zinc-400";
 
     const handleDelete = () => {
         if (!rid || !resource) return;
@@ -159,6 +166,7 @@ export function ResourceDrawer() {
         else if (bs) deleteBlendState(rid);
         else if (sh) deleteShader(rid);
         else if (param) deleteInputParameter(rid);
+        else if (mi) deleteMaterialInterface(rid);
     };
 
     if (!resource) return null;
@@ -462,6 +470,44 @@ export function ResourceDrawer() {
                         </div>
                     );
                 })()}
+                {/* ── Material Interface ── */}
+                {mi && (
+                    <>
+                        <Section label="Properties" />
+                        <Input
+                            label="Name"
+                            value={mi.name}
+                            onChange={(e) => updateMaterialInterface(mi.id, { name: e.target.value })}
+                        />
+                        <Input
+                            label="Description"
+                            value={mi.description ?? ""}
+                            placeholder="Optional…"
+                            onChange={(e) => updateMaterialInterface(mi.id, { description: e.target.value })}
+                        />
+                        <Section label="Inputs" />
+                        {mi.inputs.length === 0 ? (
+                            <div className="text-[10px] text-zinc-600 italic">No inputs defined.</div>
+                        ) : (
+                            <div className="flex flex-col gap-1">
+                                {mi.inputs.map((entry, i) => {
+                                    const TYPE_COLORS: Record<MaterialInputType, string> = {
+                                        rt: "bg-blue-900/30 text-blue-400 border-blue-700/40",
+                                        number: "bg-amber-900/30 text-amber-400 border-amber-700/40",
+                                        boolean: "bg-purple-900/30 text-purple-400 border-purple-700/40",
+                                    };
+                                    return (
+                                        <div key={i} className="flex items-center gap-2 text-[10px]">
+                                            <span className="font-mono text-zinc-300 flex-1 truncate">{entry.name}</span>
+                                            <span className={`shrink-0 rounded px-1.5 py-0.5 border text-[9px] ${TYPE_COLORS[entry.type]}`}>{entry.type}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </>
+                )}
+
                 {!param && usage && (usage.writers.length > 0 || usage.readers.length > 0) && (
                     <>
                         <Section label="Usage" />

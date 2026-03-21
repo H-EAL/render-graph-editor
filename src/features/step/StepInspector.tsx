@@ -46,7 +46,6 @@ function ColorAttachmentRow({
 }) {
     const { updateStep, resources } = useStore();
     const rtOpts = resources.renderTargets.map((r) => ({ value: r.id, label: r.name }));
-    const blendOpts = resources.blendStates.map((b) => ({ value: b.id, label: b.name }));
 
     // Check if the attached RT is multisampled
     const attachedRt = resources.renderTargets.find((r) => r.id === att.target);
@@ -155,13 +154,6 @@ function ColorAttachmentRow({
                     </div>
                 </div>
             )}
-            <FieldRow label="Blend State">
-                <ResourceSelect
-                    value={att.blendState ?? ""}
-                    onChange={(v) => updateAtt({ blendState: v })}
-                    options={blendOpts}
-                />
-            </FieldRow>
             {isMultisampled && (
                 <>
                     <div className="mx-3 my-1 border-t border-zinc-700/40" />

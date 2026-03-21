@@ -42,6 +42,12 @@ import type {
     BlendState,
     Shader,
     InputParameter,
+    InputDefinition,
+    PipelineConfig,
+    BatchFilter,
+    MaterialInterface,
+    MaterialInputEntry,
+    MaterialInputType,
     TextureFormat,
     BlendFactor,
     BlendOp,
@@ -109,10 +115,37 @@ const VK_STORE_OP: Record<number, StoreOp> = {
     1: "dontCare",
 };
 
-const VK_CULL_MODE: Record<number, "none" | "front" | "back"> = {
+const VK_CULL_MODE: Record<number, "none" | "front" | "back" | "frontAndBack"> = {
     0: "none",
     1: "front",
     2: "back",
+    3: "frontAndBack",
+};
+
+const VK_TOPOLOGY: Record<number, "pointList" | "lineList" | "lineStrip" | "triangleList" | "triangleStrip" | "triangleFan"> = {
+    0: "pointList",
+    1: "lineList",
+    2: "lineStrip",
+    3: "triangleList",
+    4: "triangleStrip",
+    5: "triangleFan",
+};
+
+const VK_POLYGON_MODE: Record<number, "fill" | "line" | "point"> = {
+    0: "fill",
+    1: "line",
+    2: "point",
+};
+
+const VK_COMPARE_OP: Record<number, "never" | "less" | "equal" | "lessOrEqual" | "greater" | "notEqual" | "greaterOrEqual" | "always"> = {
+    0: "never",
+    1: "less",
+    2: "equal",
+    3: "lessOrEqual",
+    4: "greater",
+    5: "notEqual",
+    6: "greaterOrEqual",
+    7: "always",
 };
 
 const INPUT_TYPE_MAP: Record<string, InputParamType> = {
@@ -248,13 +281,102 @@ export function importRgJson(raw: unknown): PipelineDocument {
         }),
     );
 
+    // Accumulated during node processing — keyed by sorted schema fingerprint for dedup
+    const materialInterfaces: MaterialInterface[] = [];
+    const miByFingerprint = new Map<string, string>(); // fingerprint → mi id
+
+    function getOrCreateMaterialInterface(
+        matInputs: Record<string, string | number | boolean>,
+        nodeName: string,
+    ): string {
+        const entries: MaterialInputEntry[] = Object.entries(matInputs)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([name, val]): MaterialInputEntry => ({
+                name,
+                type: (typeof val === "string" ? "rt" : typeof val === "boolean" ? "boolean" : "number") as MaterialInputType,
+            }));
+        const fingerprint = JSON.stringify(entries);
+        const existing = miByFingerprint.get(fingerprint);
+        if (existing) return existing;
+        const id = `mi-${materialInterfaces.length}`;
+        const name = (nodeName ?? "").replace(/draw batch|draw/gi, "").trim() || `Material Interface ${materialInterfaces.length + 1}`;
+        materialInterfaces.push({ id, name, inputs: entries });
+        miByFingerprint.set(fingerprint, id);
+        return id;
+    }
+
     const resources: ResourceLibrary = {
         renderTargets,
         buffers: [],
         blendStates,
         shaders,
         inputParameters,
+        materialInterfaces,
     };
+
+    // ── Input definitions (from inputDescriptor) ─────────────────────────────
+    function rgTypeToKind(type: string): InputDefinition["kind"] {
+        switch (type) {
+            case "bool":  return "bool";
+            case "float": return "float";
+            case "uint":  return "int";
+            case "color": return "color";
+            case "vec3":  return "vec3";
+            default:      return "float";
+        }
+    }
+    function camelToLabel(name: string): string {
+        return name.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()).trim();
+    }
+
+    // Collect all category names that appear as the last segment of any input's categories
+    const categoryNames = new Set<string>(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (rg.inputDescriptor ?? []).flatMap((ip: any) => (ip.categories ?? []).map((c: string) => c.toLowerCase())),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const inputDefinitions: InputDefinition[] = (rg.inputDescriptor ?? []).map((ip: any) => {
+        const kind = rgTypeToKind(ip.type ?? "float");
+        const categories: string[] = ip.categories ?? [];
+        // A bool whose id matches any category name (case-insensitive) becomes a category toggle
+        const isCategoryToggle = kind === "bool" && categoryNames.has(ip.name.toLowerCase());
+        const def: InputDefinition = {
+            id: ip.name,
+            label: camelToLabel(ip.name),
+            description: ip.description,
+            kind,
+            defaultValue: ip.default ?? (kind === "bool" ? false : 0),
+            categoryPath: categories,
+        };
+        if (isCategoryToggle) def.categoryToggle = true;
+        return def;
+    });
+
+    // ── Synthesized enums ─────────────────────────────────────────────────────
+    // If the graph exposes individual environment-mode booleans, inject a single
+    // EnvironmentType enum after displayBackground so the UI can show a selector.
+    const envModeIds = new Set(["gradient", "skybox", "skydome", "atmosphere"]);
+    const hasEnvModes = inputDefinitions.some(
+        (d) => d.kind === "bool" && envModeIds.has(d.id),
+    );
+    if (hasEnvModes) {
+        const afterIdx = inputDefinitions.findIndex((d) => d.id === "displayBackground");
+        const environmentTypeEnum: InputDefinition = {
+            id: "environmentType",
+            label: "Environment Type",
+            kind: "enum",
+            defaultValue: "gradient",
+            categoryPath: ["Environment"],
+            enumOptions: [
+                { value: "skybox",            label: "Skybox" },
+                { value: "skydome",           label: "Skydome" },
+                { value: "sphericalGradient", label: "Spherical Gradient" },
+                { value: "atmosphere",        label: "Atmosphere" },
+            ],
+        };
+        inputDefinitions.splice(afterIdx >= 0 ? afterIdx + 1 : inputDefinitions.length, 0, environmentTypeEnum);
+    }
 
     // ── Node lookup ──────────────────────────────────────────────────────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -669,24 +791,49 @@ export function importRgJson(raw: unknown): PipelineDocument {
                         const pid = inputParamByName.get(paramName as string);
                         if (pid) aliasBindings[slotName] = pid;
                     }
-                    // Blend state: pick the first valid (non-(-1)) index from blendStateIndices
+                    // Map blendStateIndices: fixed-size array matching color attachment count
+                    // -1 in source = "disabled", >=0 = resource ID
                     const bsiArr = (pd?.blendStateIndices ?? []) as number[];
-                    const firstBsi = bsiArr.find((i: number) => i >= 0) ?? -1;
-                    const blendStateId = firstBsi >= 0 ? `bs-${firstBsi}` : undefined;
+                    const blendStateIndices: Array<string> = Array.from(
+                        { length: colorAttachments.length },
+                        (_, i) => {
+                            const v = bsiArr[i];
+                            return v !== undefined && v >= 0 ? `bs-${v}` : "disabled";
+                        }
+                    );
+
+                    const pipelineConfig: PipelineConfig = {
+                        id: cmdId + "-pd",
+                        topology:        VK_TOPOLOGY[pd?.topology ?? 3]        ?? "triangleList",
+                        polygonMode:     VK_POLYGON_MODE[pd?.polygonMode ?? 0] ?? "fill",
+                        cullMode:        VK_CULL_MODE[pd?.cullMode ?? 0]       ?? "none",
+                        frontFace:       pd?.frontFace === 1 ? "clockwise" : "counterClockwise",
+                        depthBiasEnable:  pd?.depthBiasEnable  ?? false,
+                        depthTestEnable:  pd?.depthTestEnable  ?? true,
+                        depthWriteEnable: pd?.depthWriteEnable ?? false,
+                        depthCompareOp:  VK_COMPARE_OP[pd?.depthCompareOp ?? 4] ?? "greater",
+                    };
+
+                    const hasMatInputs = Object.keys(matInputs).length > 0;
+                    const isWithMaterials = node.type === 2;
+                    const materialInterfaceId =
+                        isWithMaterials && hasMatInputs
+                            ? getOrCreateMaterialInterface(matInputs, node.name ?? "")
+                            : undefined;
+
                     commands.push({
                         id: cmdId,
                         type: "drawBatch",
                         name: node.name ?? "Draw Batch",
                         shader: nodeShaderMap.get(node.nodeIndex as number) ?? "",
-                        materialInputs:
-                            Object.keys(matInputs).length > 0 ? matInputs : undefined,
+                        materialInputs: hasMatInputs ? matInputs : undefined,
+                        materialInterfaceId,
                         shaderBindings:
                             Object.keys(aliasBindings).length > 0 ? aliasBindings : undefined,
-                        withMaterials: node.type === 2 || undefined,
-                        blendState: blendStateId,
-                        depthTest: pd?.depthTestEnable ?? true,
-                        depthWrite: pd?.depthWriteEnable ?? false,
-                        cullMode: VK_CULL_MODE[pd?.cullMode ?? 0] ?? "back",
+                        withMaterials: isWithMaterials || undefined,
+                        blendStateIndices: blendStateIndices.length > 0 ? blendStateIndices : undefined,
+                        batchFilters: [{ id: cmdId + "-bf", flags: (node.batchType as number) ?? 0 } satisfies BatchFilter],
+                        pipelineConfigs: [pipelineConfig],
                     } satisfies DrawBatchCommand);
                 }
             }
@@ -999,5 +1146,5 @@ export function importRgJson(raw: unknown): PipelineDocument {
         steps,
     };
 
-    return { pipeline, resources };
+    return { pipeline, resources, inputDefinitions };
 }

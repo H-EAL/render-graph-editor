@@ -13,9 +13,10 @@ interface ResourceSelectProps {
   options: Option[];
   placeholder?: string;
   allowEmpty?: boolean;
+  emptyLabel?: string;
 }
 
-export function ResourceSelect({ label, value, onChange, options, placeholder = 'Select…', allowEmpty = true }: ResourceSelectProps) {
+export function ResourceSelect({ label, value, onChange, options, placeholder = 'Select…', allowEmpty = true, emptyLabel = '— None —' }: ResourceSelectProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -63,7 +64,7 @@ export function ResourceSelect({ label, value, onChange, options, placeholder = 
                   className="w-full text-left px-2 py-1.5 text-sm text-zinc-500 hover:bg-zinc-700"
                   onClick={() => { onChange(''); setOpen(false); }}
                 >
-                  — None —
+                  {emptyLabel}
                 </button>
               )}
               {filtered.length === 0 && (

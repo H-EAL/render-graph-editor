@@ -1,0 +1,592 @@
+{
+    "name": "Simplified Scene Renderer",
+    "uuid": "e5f6a7b8-c9d0-4e1f-8a2b-3c4d5e6f7890",
+    "defaultRenderTargetIndex": 3,
+
+    "blendStateDescriptions": [
+        {
+            "name": "oit_accum",
+            "blendEnable": true,
+            "colorBlendOp": 0, "alphaBlendOp": 0,
+            "srcColorBlendFactor": 1, "dstColorBlendFactor": 1,
+            "srcAlphaBlendFactor": 1, "dstAlphaBlendFactor": 1,
+            "colorWriteMask": 15
+        },
+        {
+            "name": "oit_reveal",
+            "blendEnable": true,
+            "colorBlendOp": 0, "alphaBlendOp": 0,
+            "srcColorBlendFactor": 0, "dstColorBlendFactor": 7,
+            "srcAlphaBlendFactor": 0, "dstAlphaBlendFactor": 7,
+            "colorWriteMask": 15
+        },
+        {
+            "name": "grid",
+            "blendEnable": true,
+            "colorBlendOp": 0, "alphaBlendOp": 0,
+            "srcColorBlendFactor": 6, "dstColorBlendFactor": 7,
+            "srcAlphaBlendFactor": 6, "dstAlphaBlendFactor": 7,
+            "colorWriteMask": 15
+        }
+    ],
+
+    "inputDescriptor": [
+        {
+            "name": "displayBackground", "type": "bool", "nativeType": "int32_t",
+            "default": true, "categories": ["Environment"],
+            "description": "Controls whether any environment background is rendered."
+        },
+        {
+            "name": "gradient", "type": "bool", "nativeType": "int32_t",
+            "default": true, "categories": ["Environment"],
+            "description": "Renders a spherical gradient as the background."
+        },
+        {
+            "name": "skybox", "type": "bool", "nativeType": "int32_t",
+            "default": false, "categories": ["Environment"],
+            "description": "Renders a cubemap skybox as the background."
+        },
+        {
+            "name": "atmosphere", "type": "bool", "nativeType": "int32_t",
+            "default": false, "categories": ["Environment"],
+            "description": "Renders a procedural physically-based atmosphere."
+        },
+        {
+            "name": "brightness", "type": "float", "nativeType": "float",
+            "default": 1.0, "categories": ["Environment"],
+            "description": "Brightness multiplier for the rendered background."
+        },
+        {
+            "name": "ambientIntensity", "type": "float", "nativeType": "float",
+            "default": 1.0, "categories": ["Environment"],
+            "description": "Ambient light intensity contributed by the environment."
+        },
+        {
+            "name": "opaque", "type": "bool", "nativeType": "int32_t",
+            "default": true, "categories": ["Rendering"],
+            "description": "Enables rendering of opaque geometry."
+        },
+        {
+            "name": "transparent", "type": "bool", "nativeType": "int32_t",
+            "default": true, "categories": ["Rendering"],
+            "description": "Enables rendering of transparent geometry."
+        },
+        {
+            "name": "decals", "type": "bool", "nativeType": "int32_t",
+            "default": true, "categories": ["Rendering"],
+            "description": "Enables decal rendering on opaque surfaces."
+        },
+        {
+            "name": "enableGeometryCulling", "type": "bool", "nativeType": "int32_t",
+            "default": true, "categories": ["Rendering"],
+            "description": "Toggles scene geometry frustum culling."
+        },
+        {
+            "name": "selectionOutlines", "type": "bool", "nativeType": "int32_t",
+            "default": true, "categories": ["Editing"],
+            "description": "Renders outlines around selected objects."
+        },
+        {
+            "name": "reflectGradient", "type": "bool", "nativeType": "int32_t",
+            "default": false, "categories": ["Rendering", "Reflection"],
+            "description": "Use the gradient environment as an indirect reflection source."
+        },
+        {
+            "name": "reflectSkybox", "type": "bool", "nativeType": "int32_t",
+            "default": false, "categories": ["Rendering", "Reflection"],
+            "description": "Use the skybox cubemap as an indirect reflection source."
+        },
+        {
+            "name": "reflectAtmosphere", "type": "bool", "nativeType": "int32_t",
+            "default": false, "categories": ["Rendering", "Reflection"],
+            "description": "Use the procedural atmosphere as an indirect reflection source."
+        },
+        {
+            "name": "backgroundReflectionFactor", "type": "float", "nativeType": "float",
+            "default": 1.0, "categories": ["Rendering", "Reflection"],
+            "description": "Intensity multiplier for environment-based indirect lighting."
+        },
+        {
+            "name": "fog", "type": "bool", "nativeType": "int32_t",
+            "default": false, "categories": ["Post-processing"],
+            "description": "Enables height and distance based volumetric fog."
+        },
+        {
+            "name": "fogColor", "type": "float", "nativeType": "float",
+            "default": 0.5, "categories": ["Post-processing"],
+            "description": "Fog scattering color intensity."
+        },
+        {
+            "name": "fogDensity", "type": "float", "nativeType": "float",
+            "default": 0.01, "categories": ["Post-processing"],
+            "description": "Volumetric fog extinction density."
+        },
+        {
+            "name": "bloom", "type": "bool", "nativeType": "int32_t",
+            "default": false, "categories": ["Post-processing"],
+            "description": "Enables bloom glow on bright surfaces."
+        },
+        {
+            "name": "bloomThreshold", "type": "float", "nativeType": "float",
+            "default": 1.0, "categories": ["Post-processing"],
+            "description": "Luminance threshold above which bloom activates."
+        },
+        {
+            "name": "bloomStrength", "type": "float", "nativeType": "float",
+            "default": 0.4, "categories": ["Post-processing"],
+            "description": "Bloom intensity multiplier."
+        },
+        {
+            "name": "colorGrading", "type": "bool", "nativeType": "int32_t",
+            "default": true, "categories": ["Post-processing"],
+            "description": "Enables LUT-based color grading."
+        },
+        {
+            "name": "tonemapBackground", "type": "bool", "nativeType": "int32_t",
+            "default": false, "categories": ["Post-processing"],
+            "description": "Applies tonemapping to the background layer as well as geometry."
+        },
+        {
+            "name": "exposure", "type": "float", "nativeType": "float",
+            "default": 1.0, "categories": ["Post-processing"],
+            "description": "Scene exposure in EV stops applied during tonemapping."
+        },
+        {
+            "name": "grid", "type": "bool", "nativeType": "int32_t",
+            "default": false, "categories": ["Editing"],
+            "description": "Renders a world-space reference grid."
+        },
+        {
+            "name": "gridHeight", "type": "float", "nativeType": "float",
+            "default": 0.0, "categories": ["Editing"],
+            "description": "World-space Y height at which the reference grid is drawn."
+        }
+    ],
+
+    "renderTargetDescriptions": [
+        { "name": "info_position",      "format": 109 },
+        { "name": "info_normal",        "format": 97  },
+        { "name": "info_depth",         "format": 126 },
+        { "name": "color",              "format": 97  },
+        { "name": "specular",           "format": 97  },
+        { "name": "depth",              "format": 130 },
+        { "name": "transparent_accum",  "format": 97  },
+        { "name": "transparent_reveal", "format": 37  },
+        { "name": "selection_rt",       "format": 37  },
+        { "name": "selection_depth",    "format": 126 }
+    ],
+
+    "nodeDataDescriptions": [
+
+        {
+            "name": "Viewport", "nodeIndex": 0, "type": 0
+        },
+        {
+            "name": "G-buffer",
+            "nodeIndex": 1, "type": 1,
+            "shaderRef": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "constDataType": 513, "batchType": 529,
+            "conditions": ["opaque"],
+            "pipelineDescription": {
+                "cullMode": 2, "topology": 3, "polygonMode": 0,
+                "depthTestEnable": true, "depthWriteEnable": true,
+                "depthCompareOp": 4, "depthBiasEnable": false,
+                "blendStateIndices": [-1, -1]
+            }
+        },
+
+        {
+            "name": "Viewport", "nodeIndex": 2, "type": 0
+        },
+        {
+            "name": "Selection Geometry",
+            "nodeIndex": 3, "type": 1,
+            "shaderRef": "b2c3d4e5-f6a7-8901-bcde-f01234567891",
+            "constDataType": 513, "batchType": 529,
+            "conditions": ["selectionOutlines"],
+            "pipelineDescription": {
+                "cullMode": 0, "topology": 3, "polygonMode": 0,
+                "depthTestEnable": true, "depthWriteEnable": true,
+                "depthCompareOp": 4, "depthBiasEnable": false,
+                "blendStateIndices": [-1]
+            }
+        },
+
+        {
+            "name": "Viewport", "nodeIndex": 4, "type": 0
+        },
+        {
+            "name": "Opaque Pre-pass (single-sided)",
+            "nodeIndex": 5, "type": 1,
+            "shaderRef": "aa04a02a-dd4c-4cf0-95c3-1175d35b60bb",
+            "constDataType": 513, "batchType": 529,
+            "conditions": ["opaque"],
+            "aliases": {
+                "__renderGraph__.localEnableGeometryCulling": "enableGeometryCulling"
+            },
+            "dataJson": {
+                "__renderGraph__.localEnableGeometryCulling": true
+            },
+            "pipelineDescription": {
+                "cullMode": 2, "topology": 3, "polygonMode": 0,
+                "depthTestEnable": true, "depthWriteEnable": true,
+                "depthCompareOp": 4, "depthBiasEnable": false,
+                "blendStateIndices": [-1]
+            }
+        },
+        {
+            "name": "Opaque Pre-pass (double-sided)",
+            "nodeIndex": 6, "type": 1,
+            "shaderRef": "aa04a02a-dd4c-4cf0-95c3-1175d35b60bb",
+            "constDataType": 513, "batchType": 530,
+            "conditions": ["opaque"],
+            "aliases": {
+                "__renderGraph__.localEnableGeometryCulling": "enableGeometryCulling"
+            },
+            "dataJson": {
+                "__renderGraph__.localEnableGeometryCulling": true
+            },
+            "pipelineDescription": {
+                "cullMode": 0, "topology": 3, "polygonMode": 0,
+                "depthTestEnable": true, "depthWriteEnable": true,
+                "depthCompareOp": 4, "depthBiasEnable": false,
+                "blendStateIndices": [-1]
+            }
+        },
+        {
+            "name": "Opaque Main Draw",
+            "nodeIndex": 7, "type": 2,
+            "shaderRef": "c3d4e5f6-a7b8-9012-cdef-012345678902",
+            "constDataType": 0, "batchType": 3,
+            "conditions": ["opaque"],
+            "aliases": {
+                "__renderGraph__.reflectGradient":          "reflectGradient",
+                "__renderGraph__.reflectSkybox":            "reflectSkybox",
+                "__renderGraph__.reflectAtmosphere":        "reflectAtmosphere",
+                "__renderGraph__.backgroundBrightness":     "brightness",
+                "__renderGraph__.indirectBrightnessFactor": "backgroundReflectionFactor",
+                "__renderGraph__.ambientIntensity":         "ambientIntensity"
+            },
+            "dataJson": {
+                "__renderGraph__.vs_position_rt": 65536,
+                "__renderGraph__.vs_normal_rt":   65537,
+                "__renderGraph__.reflectGradient":   false,
+                "__renderGraph__.reflectSkybox":     false,
+                "__renderGraph__.reflectAtmosphere": false
+            },
+            "pipelineDescription": {
+                "cullMode": 2, "topology": 3, "polygonMode": 0,
+                "depthTestEnable": true, "depthWriteEnable": false,
+                "depthCompareOp": 4, "depthBiasEnable": false,
+                "blendStateIndices": [-1, -1]
+            }
+        },
+
+        {
+            "name": "Viewport", "nodeIndex": 8, "type": 0
+        },
+        {
+            "name": "Transparent",
+            "nodeIndex": 9, "type": 2,
+            "shaderRef": "d4e5f6a7-b8c9-0123-def0-123456789013",
+            "constDataType": 0, "batchType": 2,
+            "conditions": ["transparent"],
+            "aliases": {
+                "__renderGraph__.reflectGradient":      "reflectGradient",
+                "__renderGraph__.reflectSkybox":        "reflectSkybox",
+                "__renderGraph__.reflectAtmosphere":    "reflectAtmosphere",
+                "__renderGraph__.backgroundBrightness": "brightness",
+                "__renderGraph__.ambientIntensity":     "ambientIntensity"
+            },
+            "dataJson": {
+                "__renderGraph__.vs_position_rt":        65536,
+                "__renderGraph__.reflectGradient":   false,
+                "__renderGraph__.reflectSkybox":     false,
+                "__renderGraph__.reflectAtmosphere": false
+            },
+            "pipelineDescription": {
+                "cullMode": 0, "topology": 3, "polygonMode": 0,
+                "depthTestEnable": true, "depthWriteEnable": false,
+                "depthCompareOp": 4, "depthBiasEnable": false,
+                "blendStateIndices": [0, 1]
+            }
+        },
+
+        {
+            "name": "Viewport", "nodeIndex": 10, "type": 0
+        },
+        {
+            "name": "Grid",
+            "nodeIndex": 11, "type": 8,
+            "shaderRef": "e5f6a7b8-c9d0-1234-ef01-234567890124",
+            "constDataType": 0,
+            "conditions": ["grid"],
+            "aliases": {
+                "height": "gridHeight"
+            },
+            "pipelineDescription": {
+                "cullMode": 0, "topology": 3, "polygonMode": 0,
+                "depthTestEnable": true, "depthWriteEnable": false,
+                "depthCompareOp": 4, "depthBiasEnable": false,
+                "blendStateIndices": [2]
+            }
+        },
+
+        {
+            "name": "Clear Background",
+            "nodeIndex": 12, "type": 13,
+            "outputRenderTargetIndices": [3],
+            "clearColors": [[0, 0, 0, 0]],
+            "conditions": ["!displayBackground"]
+        },
+        {
+            "name": "Gradient Background",
+            "nodeIndex": 13, "type": 3,
+            "shaderRef": "34649012-d2bc-4b1e-b6aa-cdbe99c9768e",
+            "constDataType": 0,
+            "aliases": { "brightness": "brightness" },
+            "outputRenderTargetIndices": [3],
+            "dataJson": { "color_out": 131075 },
+            "conditions": ["displayBackground", "gradient"]
+        },
+        {
+            "name": "Skybox Background",
+            "nodeIndex": 14, "type": 3,
+            "shaderRef": "5c895b9e-ab49-4c69-a24a-d85f10b76554",
+            "constDataType": 0,
+            "aliases": { "brightness": "brightness" },
+            "outputRenderTargetIndices": [3],
+            "dataJson": { "color_out": 131075 },
+            "conditions": ["displayBackground", "skybox"]
+        },
+        {
+            "name": "Atmosphere Background",
+            "nodeIndex": 15, "type": 3,
+            "shaderRef": "872eef2f-ad35-4833-9136-7335e347bdfd",
+            "constDataType": 0,
+            "aliases": {
+                "brightness":       "brightness",
+                "ambientIntensity": "ambientIntensity"
+            },
+            "outputRenderTargetIndices": [3],
+            "dataJson": { "color_out": 131075 },
+            "conditions": ["displayBackground", "atmosphere"]
+        },
+
+        {
+            "name": "Clear OIT Buffers",
+            "nodeIndex": 16, "type": 13,
+            "outputRenderTargetIndices": [6, 7],
+            "clearColors": [[0, 0, 0, 0], [1, 0, 0, 0]],
+            "conditions": ["transparent"]
+        },
+        {
+            "name": "OIT Composite",
+            "nodeIndex": 17, "type": 3,
+            "shaderRef": "f6a7b8c9-d0e1-2345-f012-345678901235",
+            "constDataType": 0,
+            "inputRenderTargetIndices": [6, 7],
+            "outputRenderTargetIndices": [3],
+            "dataJson": { "accum_rt": 65542, "reveal_rt": 65543, "color_out": 131075 },
+            "conditions": ["transparent"]
+        },
+
+        {
+            "name": "Fog",
+            "nodeIndex": 18, "type": 17,
+            "shaderRef": "0dbf6c01-13c5-4c1f-8499-c63414501119",
+            "constDataType": 7,
+            "aliases": {
+                "fogColor":         "fogColor",
+                "density":          "fogDensity",
+                "ambientIntensity": "ambientIntensity"
+            },
+            "inputRenderTargetIndices": [0, 3, 4],
+            "outputRenderTargetIndices": [3],
+            "dataJson": {
+                "position_rt": 65536,
+                "color_rt":    65539,
+                "specular_rt": 65540,
+                "result_rt":   131075
+            },
+            "conditions": ["fog"]
+        },
+
+        {
+            "name": "Bloom",
+            "nodeIndex": 19, "type": 17,
+            "shaderRef": "a7b8c9d0-e1f2-3456-0123-456789012346",
+            "constDataType": 7,
+            "aliases": {
+                "threshold": "bloomThreshold",
+                "strength":  "bloomStrength"
+            },
+            "inputRenderTargetIndices": [3],
+            "outputRenderTargetIndices": [3],
+            "dataJson": {
+                "color_rt":  65539,
+                "result_rt": 131075
+            },
+            "conditions": ["bloom"]
+        },
+
+        {
+            "name": "Color Grading",
+            "nodeIndex": 20, "type": 17,
+            "shaderRef": "b8c9d0e1-f2a3-4567-1234-567890123457",
+            "constDataType": 7,
+            "aliases": {
+                "exposure":          "exposure",
+                "tonemapBackground": "tonemapBackground"
+            },
+            "inputRenderTargetIndices": [3],
+            "outputRenderTargetIndices": [3],
+            "dataJson": {
+                "color_rt":  65539,
+                "result_rt": 131075
+            },
+            "conditions": ["colorGrading"]
+        },
+
+        {
+            "name": "Tonemap + FXAA",
+            "nodeIndex": 21, "type": 17,
+            "shaderRef": "c9d0e1f2-a3b4-5678-2345-678901234568",
+            "constDataType": 7,
+            "aliases": {
+                "exposure": "exposure"
+            },
+            "inputRenderTargetIndices": [3],
+            "outputRenderTargetIndices": [3],
+            "dataJson": {
+                "color_rt":  65539,
+                "result_rt": 131075
+            }
+        }
+    ],
+
+    "renderPassDescriptions": [
+        {
+            "name": "INFO",
+            "nodeIndices": [0, 1],
+            "colorAttachmentIndices": [0, 1],
+            "depthAttachmentIndex": 2,
+            "attachmentDescriptions": [
+                {
+                    "name": "info_position", "format": 109, "samples": 1,
+                    "loadOp": 1, "storeOp": 0, "stencilLoadOp": 2, "stencilStoreOp": 1,
+                    "initialLayout": 0, "finalLayout": 2, "flags": 0, "type": 0
+                },
+                {
+                    "name": "info_normal", "format": 97, "samples": 1,
+                    "loadOp": 1, "storeOp": 0, "stencilLoadOp": 2, "stencilStoreOp": 1,
+                    "initialLayout": 0, "finalLayout": 2, "flags": 0, "type": 0
+                },
+                {
+                    "name": "info_depth", "format": 126, "samples": 1,
+                    "loadOp": 1, "storeOp": 0, "stencilLoadOp": 1, "stencilStoreOp": 0,
+                    "initialLayout": 0, "finalLayout": 3, "flags": 0, "type": 2
+                }
+            ],
+            "attachmentClearColors": [[0,0,0,0], [0,0,0,0], [0,0,0,0]]
+        },
+        {
+            "name": "selection buffer pass",
+            "nodeIndices": [2, 3],
+            "colorAttachmentIndices": [8],
+            "depthAttachmentIndex": 9,
+            "attachmentDescriptions": [
+                {
+                    "name": "selection_rt", "format": 37, "samples": 1,
+                    "loadOp": 1, "storeOp": 0, "stencilLoadOp": 2, "stencilStoreOp": 1,
+                    "initialLayout": 0, "finalLayout": 2, "flags": 0, "type": 0
+                },
+                {
+                    "name": "selection_depth", "format": 126, "samples": 1,
+                    "loadOp": 1, "storeOp": 0, "stencilLoadOp": 1, "stencilStoreOp": 0,
+                    "initialLayout": 0, "finalLayout": 3, "flags": 0, "type": 2
+                }
+            ],
+            "attachmentClearColors": [[0,0,0,0], [0,0,0,0]]
+        },
+        {
+            "name": "MAIN OPAQUE",
+            "nodeIndices": [4, 5, 6, 7],
+            "colorAttachmentIndices": [3, 4],
+            "depthAttachmentIndex": 5,
+            "attachmentDescriptions": [
+                {
+                    "name": "color", "format": 97, "samples": 1,
+                    "loadOp": 0, "storeOp": 0, "stencilLoadOp": 2, "stencilStoreOp": 1,
+                    "initialLayout": 2, "finalLayout": 2, "flags": 0, "type": 0
+                },
+                {
+                    "name": "specular", "format": 97, "samples": 1,
+                    "loadOp": 1, "storeOp": 0, "stencilLoadOp": 2, "stencilStoreOp": 1,
+                    "initialLayout": 0, "finalLayout": 2, "flags": 0, "type": 0
+                },
+                {
+                    "name": "depth", "format": 130, "samples": 1,
+                    "loadOp": 1, "storeOp": 0, "stencilLoadOp": 1, "stencilStoreOp": 0,
+                    "initialLayout": 0, "finalLayout": 3, "flags": 0, "type": 2
+                }
+            ],
+            "attachmentClearColors": [[0,0,0,0], [0,0,0,0], [0,0,0,0]]
+        },
+        {
+            "name": "MAIN TRANSPARENT",
+            "nodeIndices": [8, 9],
+            "colorAttachmentIndices": [6, 7],
+            "depthAttachmentIndex": 5,
+            "attachmentDescriptions": [
+                {
+                    "name": "transparent_accum", "format": 97, "samples": 1,
+                    "loadOp": 0, "storeOp": 0, "stencilLoadOp": 2, "stencilStoreOp": 1,
+                    "initialLayout": 2, "finalLayout": 2, "flags": 0, "type": 0
+                },
+                {
+                    "name": "transparent_reveal", "format": 37, "samples": 1,
+                    "loadOp": 0, "storeOp": 0, "stencilLoadOp": 2, "stencilStoreOp": 1,
+                    "initialLayout": 2, "finalLayout": 2, "flags": 0, "type": 0
+                },
+                {
+                    "name": "depth", "format": 130, "samples": 1,
+                    "loadOp": 0, "storeOp": 0, "stencilLoadOp": 2, "stencilStoreOp": 1,
+                    "initialLayout": 3, "finalLayout": 3, "flags": 0, "type": 2
+                }
+            ],
+            "attachmentClearColors": [[0,0,0,0], [0,0,0,0], [0,0,0,0]]
+        },
+        {
+            "name": "grid pass",
+            "nodeIndices": [10, 11],
+            "colorAttachmentIndices": [3],
+            "attachmentDescriptions": [
+                {
+                    "name": "color", "format": 97, "samples": 1,
+                    "loadOp": 0, "storeOp": 0, "stencilLoadOp": 2, "stencilStoreOp": 1,
+                    "initialLayout": 2, "finalLayout": 2, "flags": 0, "type": 0
+                }
+            ],
+            "attachmentClearColors": [[0,0,0,0]]
+        }
+    ],
+
+    "graphOrder": [
+        [0,  0],
+        [-1, 12],
+        [-1, 13],
+        [-1, 14],
+        [-1, 15],
+        [1,  0],
+        [2,  0],
+        [-1, 16],
+        [3,  0],
+        [-1, 17],
+        [-1, 18],
+        [-1, 19],
+        [-1, 20],
+        [-1, 21],
+        [4,  0]
+    ]
+}

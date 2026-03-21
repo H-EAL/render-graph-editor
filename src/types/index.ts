@@ -92,12 +92,29 @@ export interface Shader {
     description?: string;
 }
 
+// ─── Material Interface ───────────────────────────────────────────────────────
+
+export type MaterialInputType = "rt" | "number" | "boolean";
+
+export interface MaterialInputEntry {
+    name: string;
+    type: MaterialInputType;
+}
+
+export interface MaterialInterface {
+    id: ResourceId;
+    name: string;
+    inputs: MaterialInputEntry[];
+    description?: string;
+}
+
 export interface ResourceLibrary {
     renderTargets: RenderTarget[];
     buffers: Buffer[];
     blendStates: BlendState[];
     shaders: Shader[];
     inputParameters: InputParameter[];
+    materialInterfaces: MaterialInterface[];
 }
 
 // ─── Value Sources / Data Selectors ───────────────────────────────────────────
@@ -147,7 +164,6 @@ export interface ColorAttachment {
     loadOp: LoadOp;
     storeOp: StoreOp;
     clearValue: [number, number, number, number];
-    blendState?: ResourceId;
 }
 
 export interface DepthAttachment {
@@ -220,23 +236,74 @@ export interface SetDynamicStateCommand {
     reference?: number;
 }
 
+export type VkPrimitiveTopology = "pointList" | "lineList" | "lineStrip" | "triangleList" | "triangleStrip" | "triangleFan";
+export type VkPolygonMode = "fill" | "line" | "point";
+export type VkCullMode = "none" | "front" | "back" | "frontAndBack";
+export type VkFrontFace = "counterClockwise" | "clockwise";
+export type VkCompareOp = "never" | "less" | "equal" | "lessOrEqual" | "greater" | "notEqual" | "greaterOrEqual" | "always";
+
+export interface PipelineConfig {
+    id: string;
+    label?: string;
+    // Input assembly
+    topology?: VkPrimitiveTopology;
+    // Rasterization
+    polygonMode?: VkPolygonMode;
+    cullMode?: VkCullMode;
+    frontFace?: VkFrontFace;
+    // Depth bias
+    depthBiasEnable?: boolean;
+    // Depth stencil
+    depthTestEnable?: boolean;
+    depthWriteEnable?: boolean;
+    depthCompareOp?: VkCompareOp;
+    // Stencil op state indices
+    frontFaceStencilOpStateIndex?: number;
+    backFaceStencilOpStateIndex?: number;
+}
+
+export interface BatchFilter {
+    id: string;
+    label?: string;
+    /** Bitfield of batch_type enum values */
+    flags: number;
+}
+
 export interface DrawBatchCommand {
     id: CommandId;
     type: "drawBatch";
     name: string;
-    /** Shader resource ID (points to resources.shaders entry whose uuid is the 3dverse UUID) */
+    /** Shader resource ID — unused when withMaterials is true */
     shader: ResourceId;
     /** Named shader input slot → resource ID bindings, derived from the shader descriptor */
     shaderBindings?: Record<string, ResourceId>;
     /** __renderGraph__.* inputs passed to material shaders (RT ResourceId | number | boolean) */
     materialInputs?: Record<string, string | number | boolean>;
-    blendState?: ResourceId;
-    depthTest: boolean;
-    depthWrite: boolean;
-    cullMode: "none" | "front" | "back";
     withMaterials?: boolean;
     materialSet?: string;
+    /** Material interface resource describing the __renderGraph__.* input schema */
+    materialInterfaceId?: ResourceId;
+    /** One or more batch type filter sets */
+    batchFilters?: BatchFilter[];
+    /**
+     * Blend state per color attachment ("disabled" = no blend state).
+     * Array length matches the parent raster step's color attachment count.
+     */
+    blendStateIndices?: Array<ResourceId | "disabled">;
+    /** One or more pipeline state configurations (PSO variants) */
+    pipelineConfigs?: PipelineConfig[];
+    /**
+     * Which (pipelineConfig × batchFilter) pairs are active.
+     * When absent every combination is considered active.
+     */
+    enabledCombinations?: { configId: string; filterId: string }[];
+    // ── Legacy flat fields (kept for document compatibility) ──────────────
+    blendState?: ResourceId;
+    depthTest?: boolean;
+    depthWrite?: boolean;
+    cullMode?: "none" | "front" | "back";
     batchTag?: string;
+    batchFlags?: number;
 }
 
 export type RasterCommand = SetDynamicStateCommand | DrawBatchCommand;
@@ -416,6 +483,7 @@ export interface Pipeline {
 export interface PipelineDocument {
     pipeline: Pipeline;
     resources: ResourceLibrary;
+    inputDefinitions?: InputDefinition[];
 }
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -469,6 +537,7 @@ export interface InputDefinition {
     visibilityCondition?: InputCondition;
     enabledCondition?: InputCondition;
     advanced?: boolean;
+    categoryToggle?: boolean;
     min?: number;
     max?: number;
     step?: number;

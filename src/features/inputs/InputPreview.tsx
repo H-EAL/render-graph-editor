@@ -183,32 +183,56 @@ function PreviewCategory({
     name,
     children,
     depth,
+    controllerValue,
+    onControllerChange,
 }: {
     name: string;
     children: React.ReactNode;
     depth: number;
+    controllerValue?: boolean;
+    onControllerChange?: (v: boolean) => void;
 }) {
     const [collapsed, setCollapsed] = useState(false);
+    const hasController = onControllerChange !== undefined;
+    const enabled = !hasController || controllerValue;
+
     return (
         <div className={depth === 0 ? "mb-3" : "mb-1 ml-3"}>
-            <button
-                onClick={() => setCollapsed((v) => !v)}
-                className="flex items-center gap-1.5 w-full text-left py-0.5 group"
-            >
-                <span className="text-[9px] text-zinc-600 group-hover:text-zinc-400 transition-colors">
-                    {collapsed ? "▶" : "▼"}
-                </span>
+            <div className="flex items-center gap-1.5 py-0.5 group">
+                <button
+                    onClick={() => setCollapsed((v) => !v)}
+                    className="flex items-center gap-1.5 text-left"
+                >
+                    <span className="text-[9px] text-zinc-600 group-hover:text-zinc-400 transition-colors">
+                        {collapsed ? "▶" : "▼"}
+                    </span>
+                </button>
                 <span
-                    className={`font-semibold uppercase tracking-wider ${
+                    className={`font-semibold uppercase tracking-wider flex-1 ${
                         depth === 0
                             ? "text-[10px] text-zinc-400"
                             : "text-[9px] text-zinc-500"
-                    }`}
+                    } ${hasController && !enabled ? "opacity-40" : ""}`}
+                    onClick={() => setCollapsed((v) => !v)}
+                    style={{ cursor: "pointer" }}
                 >
                     {name}
                 </span>
-            </button>
-            {!collapsed && <div className="mt-1">{children}</div>}
+                {hasController && (
+                    <input
+                        type="checkbox"
+                        checked={!!controllerValue}
+                        onChange={(e) => onControllerChange!(e.target.checked)}
+                        className="rounded accent-blue-500 w-3.5 h-3.5 shrink-0"
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                )}
+            </div>
+            {!collapsed && (
+                <div className={`mt-1 ${hasController && !enabled ? "opacity-40 pointer-events-none" : ""}`}>
+                    {children}
+                </div>
+            )}
         </div>
     );
 }
@@ -270,9 +294,18 @@ function RenderPreviewNode({
     onChange: (id: InputId, v: unknown) => void;
     depth: number;
 }) {
+    // If a bool input is marked as categoryToggle, use it as the category header switch
+    const controller = node.inputs.find((d) => d.categoryToggle && d.kind === "bool");
+    const displayedInputs = controller ? node.inputs.filter((d) => d !== controller) : node.inputs;
+
     return (
-        <PreviewCategory name={node.name} depth={depth}>
-            {node.inputs.map((def) => {
+        <PreviewCategory
+            name={node.name}
+            depth={depth}
+            controllerValue={controller ? !!(previewState[controller.id] ?? controller.defaultValue) : undefined}
+            onControllerChange={controller ? (v) => onChange(controller.id, v) : undefined}
+        >
+            {displayedInputs.map((def) => {
                 const isVisible = !def.visibilityCondition || evaluateCondition(def.visibilityCondition, previewState);
                 const isEnabled = !def.enabledCondition || evaluateCondition(def.enabledCondition, previewState);
 
