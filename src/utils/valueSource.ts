@@ -149,7 +149,12 @@ export function defaultSelector(fieldKind: FieldKind): ValueSource {
         };
     }
     if (fieldKind === "bool") {
-        return { kind: "input", inputId: "" };
+        return {
+            kind: "select",
+            condition: "",
+            trueValue: { kind: "constant", value: true },
+            falseValue: { kind: "constant", value: false },
+        };
     }
     // scalar
     return {

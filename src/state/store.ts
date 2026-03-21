@@ -253,6 +253,8 @@ export interface AppState {
     deleteStepFromIfBranch: (ifBlockId: StepId, branch: "then" | "else", stepId: StepId) => void;
     reorderIfBranch: (ifBlockId: StepId, branch: "then" | "else", orderedIds: StepId[]) => void;
     updateIfBlockCondition: (ifBlockId: StepId, condition: string) => void;
+    /** Convert an enableIf to ifBlock, or ifBlock to enableIf (only when one branch is empty). */
+    convertStepBlockType: (stepId: StepId) => void;
     /** Move a step from pass.steps into an ifBlock/enableIf branch. */
     moveStepToBranch: (passId: PassId, ifBlockId: StepId, branch: "then" | "else", stepId: StepId, insertAt?: number) => void;
     /** Move a step from an ifBlock/enableIf branch back into pass.steps. */
@@ -1299,6 +1301,44 @@ export const useStore = create<AppState>()(
                         steps: { ...s.pipeline.steps, [ifBlockId]: { ...ifStep, condition } },
                     },
                 };
+            }),
+
+        convertStepBlockType: (stepId) =>
+            set((s) => {
+                const step = s.pipeline.steps[stepId];
+                if (!step) return {};
+                let updated: Step;
+                if (step.type === "enableIf") {
+                    // enableIf → ifBlock: if condition is negated, move steps to else and use positive condition
+                    const eiStep = step as EnableIfStep;
+                    if (eiStep.condition.startsWith("!")) {
+                        const posCondition = eiStep.condition.slice(1);
+                        updated = { ...eiStep, type: "ifBlock", condition: posCondition, thenSteps: [], elseSteps: eiStep.thenSteps } as unknown as Step;
+                    } else {
+                        updated = { ...step, type: "ifBlock", elseSteps: [] } as unknown as Step;
+                    }
+                } else if (step.type === "ifBlock") {
+                    const ifStep = step as IfBlockStep;
+                    const thenEmpty = ifStep.thenSteps.length === 0;
+                    const elseEmpty = (ifStep.elseSteps ?? []).length === 0;
+                    if (!thenEmpty && !elseEmpty) return {}; // both branches have steps — no-op
+                    if (!elseEmpty) {
+                        // Only else has steps: use else as then, negate condition
+                        const neg = ifStep.condition.startsWith("!")
+                            ? ifStep.condition.slice(1)
+                            : `!${ifStep.condition}`;
+                        updated = { ...ifStep, type: "enableIf", condition: neg, thenSteps: ifStep.elseSteps ?? [] } as unknown as Step;
+                    } else {
+                        // Only then has steps (or both empty): straight conversion
+                        updated = { ...ifStep, type: "enableIf" } as unknown as Step;
+                    }
+                    // Remove elseSteps from the result (not part of EnableIfStep)
+                    const { elseSteps: _removed, ...rest } = updated as unknown as IfBlockStep & { elseSteps?: StepId[] };
+                    updated = rest as unknown as Step;
+                } else {
+                    return {};
+                }
+                return { pipeline: { ...s.pipeline, steps: { ...s.pipeline.steps, [stepId]: updated } } };
             }),
 
         moveStepToBranch: (passId, ifBlockId, branch, stepId, insertAt) =>

@@ -347,15 +347,36 @@ interface InferredCondition {
     sourceKind: "pass" | "fallback" | "variant" | "ifBlock" | "enableIf";
 }
 
+function stepBelongsToIds(stepId: string, ids: string[], allSteps: Record<string, Step>): boolean {
+    for (const id of ids) {
+        if (id === stepId) return true;
+        const s = allSteps[id];
+        if (!s) continue;
+        if (s.type === "ifBlock") {
+            const ifS = s as IfBlockStep;
+            if (stepBelongsToIds(stepId, [...ifS.thenSteps, ...(ifS.elseSteps ?? [])], allSteps)) return true;
+        } else if (s.type === "enableIf") {
+            const eiS = s as EnableIfStep;
+            if (stepBelongsToIds(stepId, eiS.thenSteps, allSteps)) return true;
+        }
+    }
+    return false;
+}
+
+function findContainingPass(stepId: string, pipeline: Pipeline) {
+    return Object.values(pipeline.passes).find((p) =>
+        stepBelongsToIds(
+            stepId,
+            [...p.steps, ...(p.disabledSteps ?? []), ...(p.variants ?? []).flatMap((v) => v.activeSteps)],
+            pipeline.steps,
+        ),
+    ) ?? null;
+}
+
 function inferStepConditions(stepId: string, pipeline: Pipeline): InferredCondition[] {
     const result: InferredCondition[] = [];
 
-    const parentPass = Object.values(pipeline.passes).find(
-        (p) =>
-            p.steps.includes(stepId) ||
-            (p.disabledSteps ?? []).includes(stepId) ||
-            (p.variants ?? []).some((v) => v.activeSteps.includes(stepId)),
-    );
+    const parentPass = findContainingPass(stepId, pipeline);
 
     if (parentPass) {
         const isFallback = (parentPass.disabledSteps ?? []).includes(stepId);
@@ -382,7 +403,8 @@ function inferStepConditions(stepId: string, pipeline: Pipeline): InferredCondit
             if (ifStep.thenSteps.includes(stepId)) {
                 result.push({ condition: ifStep.condition, source: `if (then): ${ifStep.condition}`, sourceKind: "ifBlock" });
             } else if ((ifStep.elseSteps ?? []).includes(stepId)) {
-                result.push({ condition: `NOT ${ifStep.condition}`, source: `if (else): NOT ${ifStep.condition}`, sourceKind: "ifBlock" });
+                const neg = ifStep.condition.startsWith("!") ? ifStep.condition.slice(1) : `NOT ${ifStep.condition}`;
+                result.push({ condition: neg, source: `if (else): ${neg}`, sourceKind: "ifBlock" });
             }
         } else if (s.type === "enableIf") {
             const eiStep = s as EnableIfStep;
@@ -403,13 +425,7 @@ export function StepInspector() {
         useStore();
     const step = selectedStepId ? pipeline.steps[selectedStepId] : null;
 
-    const parentPass = step
-        ? (Object.values(pipeline.passes).find((p) =>
-              p.steps.includes(step.id) ||
-              (p.disabledSteps ?? []).includes(step.id) ||
-              (p.variants ?? []).some((v) => v.activeSteps.includes(step.id)),
-          ) ?? null)
-        : null;
+    const parentPass = step ? findContainingPass(step.id, pipeline) : null;
 
     // ── Command view ──
     if (step && step.type === "raster" && selectedCommandId) {

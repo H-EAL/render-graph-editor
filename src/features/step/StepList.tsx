@@ -77,24 +77,9 @@ function ConditionSelect({
   const paramName = negated ? condition.slice(1) : condition;
 
   const ringCls = accentColor === 'purple' ? 'focus:ring-purple-500/60' : 'focus:ring-teal-500/60';
-  const negBtnActive = accentColor === 'purple'
-    ? 'bg-purple-700/60 text-purple-200 border-purple-600/60'
-    : 'bg-teal-700/60 text-teal-200 border-teal-600/60';
 
   return (
     <div className="flex items-center gap-1 flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
-      <button
-        title="Negate condition"
-        disabled={!paramName}
-        className={`shrink-0 px-1.5 py-0.5 rounded border text-xs font-mono transition-colors ${
-          negated && paramName
-            ? negBtnActive
-            : 'bg-zinc-800 text-zinc-500 border-zinc-600/50 hover:text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed'
-        }`}
-        onClick={() => paramName && onChange((negated ? '' : '!') + paramName)}
-      >
-        NOT
-      </button>
       <select
         className={`flex-1 min-w-0 bg-zinc-800 border border-zinc-600/60 text-zinc-200 text-xs rounded px-2 py-0.5 font-mono focus:outline-none focus:ring-1 ${ringCls}`}
         value={paramName}
@@ -228,7 +213,7 @@ interface IfBlockRowProps {
 }
 
 function IfBlockRow({ passId, stepId, onDelete }: IfBlockRowProps) {
-  const { pipeline, selectedStepId, selectStep, duplicateStep, updateIfBlockCondition } = useStore();
+  const { pipeline, selectedStepId, selectStep, duplicateStep, updateIfBlockCondition, convertStepBlockType } = useStore();
   const step = pipeline.steps[stepId] as IfBlockStep | undefined;
   const isSelected = selectedStepId === stepId;
   const [expanded, setExpanded] = useState(true);
@@ -237,6 +222,8 @@ function IfBlockRow({ passId, stepId, onDelete }: IfBlockRowProps) {
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
 
   if (!step || step.type !== 'ifBlock') return null;
+
+  const canConvertToEnableIf = step.thenSteps.length === 0 || (step.elseSteps ?? []).length === 0;
 
   return (
     <div style={style}
@@ -257,6 +244,9 @@ function IfBlockRow({ passId, stepId, onDelete }: IfBlockRowProps) {
           onChange={(v) => updateIfBlockCondition(stepId, v)}
         />
         <div className="hidden group-hover:flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+          {canConvertToEnableIf && (
+            <button onClick={() => convertStepBlockType(stepId)} title="Convert to enable if" className="p-1 text-zinc-500 hover:text-teal-400 rounded text-[10px] font-mono">enable if</button>
+          )}
           <button onClick={() => duplicateStep(passId, stepId)} title="Duplicate" className="p-1 text-zinc-500 hover:text-zinc-200 rounded">⧉</button>
           <button onClick={onDelete} title="Delete" className="p-1 text-zinc-500 hover:text-red-400 rounded">✕</button>
         </div>
@@ -288,7 +278,7 @@ interface EnableIfRowProps {
 }
 
 function EnableIfRow({ passId, stepId, onDelete }: EnableIfRowProps) {
-  const { pipeline, selectedStepId, selectStep, duplicateStep, updateIfBlockCondition } = useStore();
+  const { pipeline, selectedStepId, selectStep, duplicateStep, updateIfBlockCondition, convertStepBlockType } = useStore();
   const step = pipeline.steps[stepId] as EnableIfStep | undefined;
   const isSelected = selectedStepId === stepId;
   const [expanded, setExpanded] = useState(true);
@@ -316,6 +306,7 @@ function EnableIfRow({ passId, stepId, onDelete }: EnableIfRowProps) {
           onChange={(v) => updateIfBlockCondition(stepId, v)}
         />
         <div className="hidden group-hover:flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => convertStepBlockType(stepId)} title="Convert to if/else" className="p-1 text-zinc-500 hover:text-purple-400 rounded text-[10px] font-mono">if/else</button>
           <button onClick={() => duplicateStep(passId, stepId)} title="Duplicate" className="p-1 text-zinc-500 hover:text-zinc-200 rounded">⧉</button>
           <button onClick={onDelete} title="Delete" className="p-1 text-zinc-500 hover:text-red-400 rounded">✕</button>
         </div>

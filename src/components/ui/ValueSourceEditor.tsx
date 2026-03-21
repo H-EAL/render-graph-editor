@@ -236,7 +236,9 @@ function BranchValueEditor({
     const canNest = depth < 1; // allow one level of nesting max
 
     const handleModeChange = (m: Mode) => {
-        if (m === "constant") onChange({ kind: "constant", value: fieldKind === "resource" ? "" : fieldKind === "bool" ? false : 0 });
+        const constantDefault: ValueSource = { kind: "constant", value: fieldKind === "resource" ? "" : fieldKind === "bool" ? false : 0 };
+        if (m === mode) { onChange(constantDefault); return; } // toggle off → constant
+        if (m === "constant") onChange(constantDefault);
         else if (m === "input") onChange({ kind: "input", inputId: "" });
         else if (m === "select" && canNest) onChange(defaultSelector(fieldKind));
     };
@@ -345,8 +347,12 @@ export function ValueSourceEditor({
     const mode = getMode(selector);
 
     const handleModeChange = (m: Mode) => {
+        if (m === mode) {
+            onSelectorChange(undefined); // clicking active mode toggles off → constant
+            return;
+        }
         if (m === "constant") {
-            onSelectorChange(undefined); // remove selector → static constant
+            onSelectorChange(undefined);
         } else if (m === "input") {
             onSelectorChange({ kind: "input", inputId: "" });
         } else {

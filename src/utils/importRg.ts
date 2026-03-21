@@ -31,6 +31,7 @@ import type {
     FillBufferStep,
     GenerateMipChainStep,
     EnableIfStep,
+    IfBlockStep,
     ColorAttachment,
     DepthAttachment,
     DrawBatchCommand,
@@ -298,11 +299,81 @@ export function importRgJson(raw: unknown): PipelineDocument {
         reads: string[];
         writes: string[];
         isFallback: boolean;
+        secondaryCondition: string | null;
     }
     let pendingGroup: PendingStep[] = [];
     /** Only the first (pass-level) condition is tracked for coalescing decisions. */
     let pendingConditions: string[] = [];
     let pendingGroupWrites = new Set<string>();
+
+    /**
+     * Given a flat list of PendingSteps (all regular or all fallback), build the
+     * ordered list of step IDs for a pass, merging steps that share opposite
+     * secondary conditions into a single ifBlock.
+     */
+    function buildStepListFromGroup(group: PendingStep[]): string[] {
+        const negCond = (c: string) => (c.startsWith("!") ? c.slice(1) : `!${c}`);
+        const posCond = (c: string) => (c.startsWith("!") ? c.slice(1) : c);
+
+        // Group by secondary condition, preserving insertion order
+        const bySecondary = new Map<string | null, PendingStep[]>();
+        for (const ps of group) {
+            const key = ps.secondaryCondition ?? null;
+            if (!bySecondary.has(key)) bySecondary.set(key, []);
+            bySecondary.get(key)!.push(ps);
+        }
+
+        const stepIds: string[] = [];
+        const handled = new Set<string>();
+
+        for (const [cond, grp] of bySecondary) {
+            if (cond !== null && handled.has(cond)) continue;
+
+            if (cond === null) {
+                // No secondary condition — add steps directly
+                for (const ps of grp) {
+                    ps.step.conditions = [];
+                    stepIds.push(ps.step.id);
+                }
+            } else {
+                handled.add(cond);
+                const oppCond = negCond(cond);
+                const oppGrp = bySecondary.get(oppCond) ?? [];
+                handled.add(oppCond);
+
+                if (oppGrp.length > 0) {
+                    // Both sides present → emit a single ifBlock
+                    const positive = posCond(cond);
+                    const thenGrp = cond.startsWith("!") ? oppGrp : grp;
+                    const elseGrp = cond.startsWith("!") ? grp : oppGrp;
+                    const thenStepIds = thenGrp.map((ps) => { ps.step.conditions = []; return ps.step.id; });
+                    const elseStepIds = elseGrp.map((ps) => { ps.step.conditions = []; return ps.step.id; });
+                    const ifBlockId = uniqueId(`step-ifblock-${slug(positive)}`, usedIds);
+                    const ifBlock: IfBlockStep = {
+                        id: ifBlockId,
+                        type: "ifBlock",
+                        name: `if ${positive}`,
+                        reads: [],
+                        writes: [],
+                        conditions: [],
+                        condition: positive,
+                        thenSteps: thenStepIds,
+                        elseSteps: elseStepIds,
+                    };
+                    steps[ifBlockId] = ifBlock;
+                    stepIds.push(ifBlockId);
+                } else {
+                    // Only one side present → enableIf wrapper
+                    for (const ps of grp) {
+                        const wrappedId = wrapWithCondition(ps.step.id, cond);
+                        stepIds.push(wrappedId);
+                    }
+                }
+            }
+        }
+
+        return stepIds;
+    }
 
     /** Flush the current pending group into a single pass. */
     function flushPendingGroup() {
@@ -328,6 +399,9 @@ export function importRgJson(raw: unknown): PipelineDocument {
         const allReads = [...new Set(pendingGroup.flatMap((p) => p.reads))];
         const allWrites = [...new Set(pendingGroup.flatMap((p) => p.writes))];
 
+        const passStepIds = buildStepListFromGroup(regularSteps);
+        const disabledStepIds = buildStepListFromGroup(fallbackSteps);
+
         const pass: Pass = {
             id: passId,
             name: passName,
@@ -336,8 +410,8 @@ export function importRgJson(raw: unknown): PipelineDocument {
             conditions: pendingConditions.length > 0 ? [pendingConditions[0]] : [],
             reads: allReads,
             writes: allWrites,
-            steps: regularSteps.map((p) => p.step.id),
-            disabledSteps: fallbackSteps.length > 0 ? fallbackSteps.map((p) => p.step.id) : undefined,
+            steps: passStepIds,
+            disabledSteps: disabledStepIds.length > 0 ? disabledStepIds : undefined,
         };
         passes[passId] = pass;
         timelinePassIds.push(passId);
@@ -875,11 +949,8 @@ export function importRgJson(raw: unknown): PipelineDocument {
             if (!step) continue;
             steps[stepId] = step;
 
-            // conditions[0] → pass condition; conditions[1] → optional enableIf on the step
-            const outerStepId =
-                conditions.length > 1
-                    ? wrapWithCondition(stepId, conditions[1])
-                    : stepId;
+            // conditions[0] → pass condition; conditions[1] → secondary (handled in flushPendingGroup)
+            const secondaryCondition = conditions[1] ?? null;
 
             // ── Coalesce / opposite-merge / flush ────────────────────────────────
             const positiveCondition = getOppositePassCondition(pendingConditions, conditions);
@@ -894,16 +965,16 @@ export function importRgJson(raw: unknown): PipelineDocument {
                 }
                 pendingConditions = [positiveCondition];
                 for (const w of writes) pendingGroupWrites.add(w);
-                pendingGroup.push({ step: steps[outerStepId], reads, writes, isFallback: !pendingAreFallback });
+                pendingGroup.push({ step: steps[stepId], reads, writes, isFallback: !pendingAreFallback, secondaryCondition });
             } else if (!canCoalesceNode(node)) {
                 flushPendingGroup();
                 pendingConditions = conditions.length > 0 ? [conditions[0]] : [];
                 for (const w of writes) pendingGroupWrites.add(w);
-                pendingGroup.push({ step: steps[outerStepId], reads, writes, isFallback: false });
+                pendingGroup.push({ step: steps[stepId], reads, writes, isFallback: false, secondaryCondition });
             } else {
                 if (pendingGroup.length === 0) pendingConditions = conditions.length > 0 ? [conditions[0]] : [];
                 for (const w of writes) pendingGroupWrites.add(w);
-                pendingGroup.push({ step: steps[outerStepId], reads, writes, isFallback: false });
+                pendingGroup.push({ step: steps[stepId], reads, writes, isFallback: false, secondaryCondition });
             }
         }
     }
