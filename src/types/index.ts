@@ -269,9 +269,13 @@ export interface BatchFilter {
     flags: number;
 }
 
+export type DrawBatchType = "batch" | "fullscreen" | "debugLines";
+
 export interface DrawBatchCommand {
     id: CommandId;
     type: "drawBatch";
+    /** Distinguishes draw batch, fullscreen quad, and debug lines variants */
+    drawType?: DrawBatchType;
     name: string;
     /** Shader resource ID — unused when withMaterials is true */
     shader: ResourceId;

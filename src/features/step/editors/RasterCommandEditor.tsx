@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { useStore } from "../../../state/store";
 import { Input } from "../../../components/ui/Input";
 import { Select } from "../../../components/ui/Select";
@@ -11,6 +10,7 @@ import type {
     RasterCommand,
     SetDynamicStateCommand,
     DrawBatchCommand,
+    DrawBatchType,
     PipelineConfig,
     BatchFilter,
     VkPrimitiveTopology,
@@ -461,6 +461,29 @@ function DrawBatchEditor({ cmd, stepId }: { cmd: DrawBatchCommand; stepId: StepI
 
     return (
         <>
+            {/* ── Draw type ─────────────────────────────────────────────── */}
+            <div className="px-3 pt-2 pb-1">
+                <div className="flex rounded overflow-hidden border border-zinc-700/60">
+                    {(["batch", "fullscreen", "debugLines"] as DrawBatchType[]).map((dt) => {
+                        const labels: Record<DrawBatchType, string> = {
+                            batch: "Batch",
+                            fullscreen: "Fullscreen",
+                            debugLines: "Debug Lines",
+                        };
+                        const active = (cmd.drawType ?? "batch") === dt;
+                        return (
+                            <button
+                                key={dt}
+                                onClick={() => u({ drawType: dt })}
+                                className={`flex-1 text-[10px] py-1 transition-colors ${active ? "bg-blue-900/50 text-blue-300" : "text-zinc-500 hover:text-zinc-300"}`}
+                            >
+                                {labels[dt]}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
             {/* ── Blend states ──────────────────────────────────────────── */}
             {stepAttachmentCount > 0 && (() => {
                 const blendIndices: Array<ResourceId | "disabled"> = Array.from(
@@ -498,21 +521,23 @@ function DrawBatchEditor({ cmd, stepId }: { cmd: DrawBatchCommand; stepId: StepI
 
             {/* ── Shader source ─────────────────────────────────────────── */}
             <div className="px-3 pt-2 pb-1">
-                <div className="flex rounded overflow-hidden border border-zinc-700/60 mb-2">
-                    <button
-                        onClick={() => u({ withMaterials: false })}
-                        className={`flex-1 text-[10px] py-1 transition-colors ${!cmd.withMaterials ? "bg-blue-900/50 text-blue-300" : "text-zinc-500 hover:text-zinc-300"}`}
-                    >
-                        Custom Shader
-                    </button>
-                    <button
-                        onClick={() => u({ withMaterials: true })}
-                        className={`flex-1 text-[10px] py-1 transition-colors ${cmd.withMaterials ? "bg-blue-900/50 text-blue-300" : "text-zinc-500 hover:text-zinc-300"}`}
-                    >
-                        Material Shaders
-                    </button>
-                </div>
-                {!cmd.withMaterials ? (
+                {(cmd.drawType ?? "batch") === "batch" && (
+                    <div className="flex rounded overflow-hidden border border-zinc-700/60 mb-2">
+                        <button
+                            onClick={() => u({ withMaterials: false })}
+                            className={`flex-1 text-[10px] py-1 transition-colors ${!cmd.withMaterials ? "bg-blue-900/50 text-blue-300" : "text-zinc-500 hover:text-zinc-300"}`}
+                        >
+                            Custom Shader
+                        </button>
+                        <button
+                            onClick={() => u({ withMaterials: true })}
+                            className={`flex-1 text-[10px] py-1 transition-colors ${cmd.withMaterials ? "bg-blue-900/50 text-blue-300" : "text-zinc-500 hover:text-zinc-300"}`}
+                        >
+                            Material Shaders
+                        </button>
+                    </div>
+                )}
+                {!cmd.withMaterials || (cmd.drawType ?? "batch") !== "batch" ? (
                     <ResourceSelect
                         value={cmd.shader}
                         onChange={(v) => u({ shader: v })}
@@ -608,7 +633,7 @@ function DrawBatchEditor({ cmd, stepId }: { cmd: DrawBatchCommand; stepId: StepI
             )}
 
             {/* ── Batch filters ─────────────────────────────────────────── */}
-            <div className="border-t border-zinc-800/60 px-3 py-2">
+            {(cmd.drawType ?? "batch") === "batch" && <div className="border-t border-zinc-800/60 px-3 py-2">
                 <div className="flex items-center gap-2 mb-1.5">
                     <span className="text-[9px] font-semibold text-zinc-600 uppercase tracking-wider flex-1">Batch Filters</span>
                     <button onClick={addFilter} className="text-[9px] text-zinc-500 hover:text-zinc-300 transition-colors">＋ Add</button>
@@ -623,7 +648,7 @@ function DrawBatchEditor({ cmd, stepId }: { cmd: DrawBatchCommand; stepId: StepI
                         removable={batchFilters.length > 1}
                     />
                 ))}
-            </div>
+            </div>}
 
             {/* ── Pipeline configs ──────────────────────────────────────── */}
             <div className="border-t border-zinc-800/60 px-3 py-2">

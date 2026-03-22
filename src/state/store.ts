@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { newId } from "../utils/id";
 import { rgDocument } from "../data/seed";
-import rawRg from "../assets/rg.json";
 import { fetchShaderDescriptor } from "../utils/shaderApi";
 import type {
     Pipeline,

@@ -35,6 +35,7 @@ import type {
     ColorAttachment,
     DepthAttachment,
     DrawBatchCommand,
+    DrawBatchType,
     SetDynamicStateCommand,
     Timeline,
     ResourceLibrary,
@@ -783,7 +784,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
                     node.type === 8 ||
                     node.type === 16
                 ) {
-                    // 1 = draw batch, 2 = draw batch with materials, 8 = fullscreen/quad, 16 = debug
+                    // 1 = draw_batch, 2 = draw_batch_with_materials, 8 = node_draw_quad, 16 = draw_debug_lines
                     const pd = node.pipelineDescription;
                     const matInputs = materialInputsFromDataJson(node.dataJson);
                     const aliasBindings: Record<string, string> = {};
@@ -821,9 +822,17 @@ export function importRgJson(raw: unknown): PipelineDocument {
                             ? getOrCreateMaterialInterface(matInputs, node.name ?? "")
                             : undefined;
 
+                    const DRAW_TYPE_MAP: Record<number, DrawBatchType> = {
+                        1: "batch",
+                        2: "batch",
+                        8: "fullscreen",
+                        16: "debugLines",
+                    };
+
                     commands.push({
                         id: cmdId,
                         type: "drawBatch",
+                        drawType: DRAW_TYPE_MAP[node.type as number] ?? "batch",
                         name: node.name ?? "Draw Batch",
                         shader: nodeShaderMap.get(node.nodeIndex as number) ?? "",
                         materialInputs: hasMatInputs ? matInputs : undefined,
