@@ -64,9 +64,35 @@ function collectAllPassStepIds(pass: Pass, steps: Record<StepId, Step>): StepId[
     return topLevel.flatMap((sid) => collectAllStepIds(sid, steps));
 }
 
+// ─── Raster command helpers ───────────────────────────────────────────────────
+
+function patchCommandInList(
+    commands: RasterCommand[],
+    commandId: CommandId,
+    patch: Partial<RasterCommand>,
+): RasterCommand[] {
+    return commands.map((c) => {
+        if (c.id === commandId) return { ...c, ...patch } as RasterCommand;
+        if (c.type === "enableIf") {
+            return { ...c, thenCommands: patchCommandInList(c.thenCommands, commandId, patch) };
+        }
+        return c;
+    });
+}
+
+function deleteCommandFromList(commands: RasterCommand[], commandId: CommandId): RasterCommand[] {
+    return commands
+        .filter((c) => c.id !== commandId)
+        .map((c) =>
+            c.type === "enableIf"
+                ? { ...c, thenCommands: deleteCommandFromList(c.thenCommands, commandId) }
+                : c,
+        );
+}
+
 // ─── Default factories ────────────────────────────────────────────────────────
 
-function makeDefaultCommand(type: RasterCommandType): RasterCommand {
+function makeDefaultCommand(type: RasterCommandType, drawType?: import("../types").DrawBatchType): RasterCommand {
     const id = newId();
     switch (type) {
         case "setDynamicState":
@@ -82,13 +108,24 @@ function makeDefaultCommand(type: RasterCommandType): RasterCommand {
                 minDepth: 0,
                 maxDepth: 1,
             };
-        case "drawBatch":
+        case "enableIf":
+            return { id, type: "enableIf", name: "Enable If", condition: "", thenCommands: [] };
+        case "drawBatch": {
+            const dt = drawType ?? "batch";
+            const DRAW_TYPE_LABELS: Record<import("../types").DrawBatchType, string> = {
+                batch: "Draw Batch",
+                batchWithMaterials: "Draw Batch (Materials)",
+                fullscreen: "Draw Fullscreen",
+                debugLines: "Draw Debug Lines",
+            };
             return {
                 id,
                 type,
-                name: "Draw Batch",
+                drawType: dt,
+                name: DRAW_TYPE_LABELS[dt],
                 shader: "",
-                batchFilters: [{ id: newId(), flags: 0 }],
+                withMaterials: dt === "batchWithMaterials" || undefined,
+                ...(dt === "batch" || dt === "batchWithMaterials" ? { batchFilters: [{ id: newId(), flags: 0 }] } : {}),
                 pipelineConfigs: [{
                     id: newId(),
                     cullMode: "back",
@@ -101,6 +138,7 @@ function makeDefaultCommand(type: RasterCommandType): RasterCommand {
                     depthBiasEnable: false,
                 }],
             };
+        }
     }
 }
 
@@ -273,7 +311,8 @@ export interface AppState {
     moveStepBetweenBranches: (srcIfBlockId: StepId, srcBranch: "then" | "else", dstIfBlockId: StepId, dstBranch: "then" | "else", stepId: StepId, insertAt?: number) => void;
 
     // ── Raster command actions ────────────────────────────────────────────────
-    addRasterCommand: (stepId: StepId, type: RasterCommandType) => void;
+    addRasterCommand: (stepId: StepId, type: RasterCommandType, drawType?: import("../types").DrawBatchType) => void;
+    addCommandToEnableIf: (stepId: StepId, enableIfId: CommandId, type: RasterCommandType, drawType?: import("../types").DrawBatchType) => void;
     deleteRasterCommand: (stepId: StepId, commandId: CommandId) => void;
     duplicateRasterCommand: (stepId: StepId, commandId: CommandId) => void;
     reorderRasterCommands: (stepId: StepId, commands: RasterCommand[]) => void;
@@ -1430,11 +1469,11 @@ export const useStore = create<AppState>()(
             }),
 
         // ── Raster commands ───────────────────────────────────────────────────
-        addRasterCommand: (stepId, type) =>
+        addRasterCommand: (stepId, type, drawType) =>
             set((s) => {
                 const step = getRasterStep(s.pipeline, stepId);
                 if (!step) return {};
-                const cmd = makeDefaultCommand(type);
+                const cmd = makeDefaultCommand(type, drawType);
                 const newStep: RasterStep = { ...step, commands: [...step.commands, cmd] };
                 return {
                     pipeline: {
@@ -1451,7 +1490,7 @@ export const useStore = create<AppState>()(
                 if (!step) return {};
                 const newStep: RasterStep = {
                     ...step,
-                    commands: step.commands.filter((c) => c.id !== commandId),
+                    commands: deleteCommandFromList(step.commands, commandId),
                 };
                 return {
                     pipeline: {
@@ -1499,15 +1538,28 @@ export const useStore = create<AppState>()(
             set((s) => {
                 const step = getRasterStep(s.pipeline, stepId);
                 if (!step) return {};
-                const newCommands = step.commands.map((c) =>
-                    c.id === commandId ? ({ ...c, ...patch } as RasterCommand) : c,
-                );
+                const newStep: RasterStep = {
+                    ...step,
+                    commands: patchCommandInList(step.commands, commandId, patch),
+                };
+                return { pipeline: { ...s.pipeline, steps: { ...s.pipeline.steps, [stepId]: newStep } } };
+            }),
+
+        addCommandToEnableIf: (stepId, enableIfId, type, drawType) =>
+            set((s) => {
+                const step = getRasterStep(s.pipeline, stepId);
+                if (!step) return {};
+                const child = makeDefaultCommand(type, drawType);
+                const newCommands = step.commands.map((c): RasterCommand => {
+                    if (c.id === enableIfId && c.type === "enableIf") {
+                        return { ...c, thenCommands: [...c.thenCommands, child] };
+                    }
+                    return c;
+                });
                 const newStep: RasterStep = { ...step, commands: newCommands };
                 return {
-                    pipeline: {
-                        ...s.pipeline,
-                        steps: { ...s.pipeline.steps, [stepId]: newStep },
-                    },
+                    pipeline: { ...s.pipeline, steps: { ...s.pipeline.steps, [stepId]: newStep } },
+                    selectedCommandId: child.id,
                 };
             }),
 

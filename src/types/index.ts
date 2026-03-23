@@ -269,7 +269,7 @@ export interface BatchFilter {
     flags: number;
 }
 
-export type DrawBatchType = "batch" | "fullscreen" | "debugLines";
+export type DrawBatchType = "batch" | "batchWithMaterials" | "fullscreen" | "debugLines";
 
 export interface DrawBatchCommand {
     id: CommandId;
@@ -310,7 +310,15 @@ export interface DrawBatchCommand {
     batchFlags?: number;
 }
 
-export type RasterCommand = SetDynamicStateCommand | DrawBatchCommand;
+export interface EnableIfCommand {
+    id: CommandId;
+    type: "enableIf";
+    name: string;
+    condition: string;
+    thenCommands: RasterCommand[];
+}
+
+export type RasterCommand = SetDynamicStateCommand | DrawBatchCommand | EnableIfCommand;
 export type RasterCommandType = RasterCommand["type"];
 
 // ─── Steps ────────────────────────────────────────────────────────────────────

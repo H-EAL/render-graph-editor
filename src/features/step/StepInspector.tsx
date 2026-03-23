@@ -13,6 +13,7 @@ import { FillBufferEditor, GenerateMipChainEditor } from "./editors/SimpleTarget
 import type {
     Step,
     RasterStep,
+    RasterCommand,
     ColorAttachment,
     DepthAttachment,
     LoadOp,
@@ -21,6 +22,30 @@ import type {
     EnableIfStep,
     Pipeline,
 } from "../../types";
+
+/** Returns the chain of enableIf conditions wrapping the target command, or null if not found. */
+function getCommandConditions(commands: RasterCommand[], targetId: string): string[] | null {
+    for (const cmd of commands) {
+        if (cmd.id === targetId) return [];
+        if (cmd.type === "enableIf") {
+            const inner = getCommandConditions(cmd.thenCommands, targetId);
+            if (inner !== null) return [cmd.condition, ...inner];
+        }
+    }
+    return null;
+}
+
+/** Finds a command by id, recursing into enableIf blocks. */
+function findCommand(commands: RasterCommand[], id: string): RasterCommand | null {
+    for (const cmd of commands) {
+        if (cmd.id === id) return cmd;
+        if (cmd.type === "enableIf") {
+            const found = findCommand(cmd.thenCommands, id);
+            if (found) return found;
+        }
+    }
+    return null;
+}
 
 // ─── Raster step: attachment editors ─────────────────────────────────────────
 
@@ -421,8 +446,26 @@ export function StepInspector() {
 
     // ── Command view ──
     if (step && step.type === "raster" && selectedCommandId) {
-        const cmd = (step as RasterStep).commands.find((c) => c.id === selectedCommandId);
+        const rasterStep = step as RasterStep;
+        const cmd = findCommand(rasterStep.commands, selectedCommandId);
         if (cmd) {
+            const stepConditions = inferStepConditions(step.id, pipeline);
+            const cmdEnableIfConditions: InferredCondition[] = (getCommandConditions(rasterStep.commands, cmd.id) ?? [])
+                .map((cond) => ({
+                    condition: cond,
+                    source: `enable if: ${cond}`,
+                    sourceKind: "enableIf" as const,
+                }));
+            const allConditions: InferredCondition[] = [...stepConditions, ...cmdEnableIfConditions];
+
+            const kindCls: Record<InferredCondition["sourceKind"], string> = {
+                pass:     "bg-blue-900/30 text-blue-300 border-blue-700/40",
+                fallback: "bg-zinc-800/60 text-zinc-500 border-zinc-700/40",
+                variant:  "bg-violet-900/30 text-violet-300 border-violet-700/40",
+                ifBlock:  "bg-purple-900/30 text-purple-300 border-purple-700/40",
+                enableIf: "bg-teal-900/30 text-teal-300 border-teal-700/40",
+            };
+
             return (
                 <div className="flex flex-col overflow-y-auto h-full">
                     {/* ◂ breadcrumb back to step */}
@@ -433,6 +476,23 @@ export function StepInspector() {
                         <span>◂</span>
                         <span className="truncate">{step.name}</span>
                     </button>
+
+                    <InspectorSection title="Conditions">
+                        {allConditions.length === 0 ? (
+                            <div className="px-3 py-2 text-[10px] text-zinc-600 italic">Always active — no conditions apply.</div>
+                        ) : (
+                            <div className="px-3 py-2 flex flex-col gap-1.5">
+                                {allConditions.map((ic, i) => (
+                                    <div key={i} className="flex items-center gap-2">
+                                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${kindCls[ic.sourceKind]}`}>
+                                            {ic.condition}
+                                        </span>
+                                        <span className="text-[10px] text-zinc-600">{ic.source}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </InspectorSection>
 
                     <InspectorSection title="Command">
                         <RasterCommandEditor stepId={step.id} commandId={cmd.id} command={cmd} />

@@ -10,6 +10,7 @@ import type {
     RasterCommand,
     SetDynamicStateCommand,
     DrawBatchCommand,
+    EnableIfCommand,
     DrawBatchType,
     PipelineConfig,
     BatchFilter,
@@ -459,29 +460,21 @@ function DrawBatchEditor({ cmd, stepId }: { cmd: DrawBatchCommand; stepId: StepI
     const addFilter = () =>
         u({ batchFilters: [...batchFilters, { id: newId(), flags: 0 }] });
 
+    const DRAW_TYPE_LABELS: Record<DrawBatchType, string> = {
+        batch: "Draw Batch",
+        batchWithMaterials: "Draw Batch (Materials)",
+        fullscreen: "Draw Fullscreen",
+        debugLines: "Draw Debug Lines",
+    };
+    const drawType = cmd.drawType ?? "batch";
+
     return (
         <>
-            {/* ── Draw type ─────────────────────────────────────────────── */}
+            {/* ── Draw type badge (read-only) ────────────────────────────── */}
             <div className="px-3 pt-2 pb-1">
-                <div className="flex rounded overflow-hidden border border-zinc-700/60">
-                    {(["batch", "fullscreen", "debugLines"] as DrawBatchType[]).map((dt) => {
-                        const labels: Record<DrawBatchType, string> = {
-                            batch: "Batch",
-                            fullscreen: "Fullscreen",
-                            debugLines: "Debug Lines",
-                        };
-                        const active = (cmd.drawType ?? "batch") === dt;
-                        return (
-                            <button
-                                key={dt}
-                                onClick={() => u({ drawType: dt })}
-                                className={`flex-1 text-[10px] py-1 transition-colors ${active ? "bg-blue-900/50 text-blue-300" : "text-zinc-500 hover:text-zinc-300"}`}
-                            >
-                                {labels[dt]}
-                            </button>
-                        );
-                    })}
-                </div>
+                <span className="text-[9px] px-2 py-0.5 rounded border bg-blue-900/30 text-blue-300 border-blue-700/40">
+                    {DRAW_TYPE_LABELS[drawType]}
+                </span>
             </div>
 
             {/* ── Blend states ──────────────────────────────────────────── */}
@@ -521,51 +514,25 @@ function DrawBatchEditor({ cmd, stepId }: { cmd: DrawBatchCommand; stepId: StepI
 
             {/* ── Shader source ─────────────────────────────────────────── */}
             <div className="px-3 pt-2 pb-1">
-                {(cmd.drawType ?? "batch") === "batch" && (
-                    <div className="flex rounded overflow-hidden border border-zinc-700/60 mb-2">
-                        <button
-                            onClick={() => u({ withMaterials: false })}
-                            className={`flex-1 text-[10px] py-1 transition-colors ${!cmd.withMaterials ? "bg-blue-900/50 text-blue-300" : "text-zinc-500 hover:text-zinc-300"}`}
-                        >
-                            Custom Shader
-                        </button>
-                        <button
-                            onClick={() => u({ withMaterials: true })}
-                            className={`flex-1 text-[10px] py-1 transition-colors ${cmd.withMaterials ? "bg-blue-900/50 text-blue-300" : "text-zinc-500 hover:text-zinc-300"}`}
-                        >
-                            Material Shaders
-                        </button>
-                    </div>
-                )}
-                {!cmd.withMaterials || (cmd.drawType ?? "batch") !== "batch" ? (
+                {drawType === "batchWithMaterials" ? (
+                    <ResourceSelect
+                        value={cmd.materialInterfaceId ?? ""}
+                        onChange={(v) => u({ materialInterfaceId: v || undefined })}
+                        options={miOpts}
+                        allowEmpty
+                        placeholder="None"
+                    />
+                ) : (
                     <ResourceSelect
                         value={cmd.shader}
                         onChange={(v) => u({ shader: v })}
                         options={shaderOpts}
                     />
-                ) : (
-                    <>
-                        <Input
-                            value={cmd.materialSet ?? ""}
-                            onChange={(e) => u({ materialSet: e.target.value })}
-                            placeholder="material set tag…"
-                        />
-                        <div className="mt-1.5">
-                            <div className="text-[9px] text-zinc-600 mb-0.5 uppercase tracking-wider">Interface</div>
-                            <ResourceSelect
-                                value={cmd.materialInterfaceId ?? ""}
-                                onChange={(v) => u({ materialInterfaceId: v || undefined })}
-                                options={miOpts}
-                                allowEmpty
-                                placeholder="None"
-                            />
-                        </div>
-                    </>
                 )}
             </div>
 
             {/* ── Shader bindings ───────────────────────────────────────── */}
-            {cmd.shader && !cmd.withMaterials && (
+            {cmd.shader && drawType !== "batchWithMaterials" && (
                 <div className="border-t border-zinc-800/60">
                     <div className="px-3 py-1 flex items-center gap-2">
                         <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex-1">Shader Bindings</span>
@@ -633,7 +600,7 @@ function DrawBatchEditor({ cmd, stepId }: { cmd: DrawBatchCommand; stepId: StepI
             )}
 
             {/* ── Batch filters ─────────────────────────────────────────── */}
-            {(cmd.drawType ?? "batch") === "batch" && <div className="border-t border-zinc-800/60 px-3 py-2">
+            {(drawType === "batch" || drawType === "batchWithMaterials") && <div className="border-t border-zinc-800/60 px-3 py-2">
                 <div className="flex items-center gap-2 mb-1.5">
                     <span className="text-[9px] font-semibold text-zinc-600 uppercase tracking-wider flex-1">Batch Filters</span>
                     <button onClick={addFilter} className="text-[9px] text-zinc-500 hover:text-zinc-300 transition-colors">＋ Add</button>
@@ -752,6 +719,29 @@ function DrawBatchEditor({ cmd, stepId }: { cmd: DrawBatchCommand; stepId: StepI
     );
 }
 
+// ─── Enable-If command editor ─────────────────────────────────────────────────
+
+function EnableIfCommandEditor({ cmd, stepId }: { cmd: EnableIfCommand; stepId: StepId }) {
+    const { updateRasterCommand } = useStore();
+    const u = (patch: Partial<EnableIfCommand>) =>
+        updateRasterCommand(stepId, cmd.id, patch as Partial<RasterCommand>);
+
+    return (
+        <div className="px-3 py-2">
+            <FieldRow label="Condition">
+                <Input
+                    value={cmd.condition}
+                    onChange={(e) => u({ condition: e.target.value })}
+                    placeholder="inputName"
+                />
+            </FieldRow>
+            <div className="mt-2 text-[9px] text-zinc-600 uppercase tracking-wider">
+                {cmd.thenCommands.length} command{cmd.thenCommands.length !== 1 ? 's' : ''} — edit in the command list
+            </div>
+        </div>
+    );
+}
+
 interface RasterCommandEditorProps {
     stepId: StepId;
     commandId: CommandId;
@@ -772,6 +762,7 @@ export function RasterCommandEditor({ stepId, commandId, command }: RasterComman
                 <SetDynamicStateEditor cmd={command} stepId={stepId} />
             )}
             {command.type === "drawBatch" && <DrawBatchEditor cmd={command} stepId={stepId} />}
+            {command.type === "enableIf" && <EnableIfCommandEditor cmd={command} stepId={stepId} />}
         </div>
     );
 }

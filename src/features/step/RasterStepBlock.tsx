@@ -17,17 +17,21 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../../state/store';
-import type { RasterStep, RasterCommand, PassId, StepId } from '../../types';
+import type { RasterStep, RasterCommand, EnableIfCommand, PassId, StepId } from '../../types';
 
-const CMD_TYPE_ABBR: Record<string, string> = {
-  setDynamicState: 'DYN',
-  drawBatch: 'DRAW',
-};
+const DRAW_TYPE_ABBR: Record<string, string> = { batch: 'DRAW', batchWithMaterials: 'MAT', fullscreen: 'FS', debugLines: 'DBG' };
 
-const CMD_TYPE_CLS: Record<string, string> = {
-  setDynamicState: 'bg-zinc-700/60 text-zinc-400 border-zinc-600/40',
-  drawBatch: 'bg-blue-900/70 text-blue-300 border-blue-800/50',
-};
+function cmdAbbr(cmd: RasterCommand): string {
+  if (cmd.type === 'drawBatch') return DRAW_TYPE_ABBR[cmd.drawType ?? 'batch'] ?? 'DRAW';
+  if (cmd.type === 'enableIf') return 'IF';
+  return 'DYN';
+}
+
+function cmdCls(cmd: RasterCommand): string {
+  if (cmd.type === 'drawBatch') return 'bg-blue-900/70 text-blue-300 border-blue-800/50';
+  if (cmd.type === 'enableIf') return 'bg-teal-900/60 text-teal-300 border-teal-700/50';
+  return 'bg-zinc-700/60 text-zinc-400 border-zinc-600/40';
+}
 
 // ─── Single command row (sortable) ────────────────────────────────────────────
 
@@ -48,8 +52,8 @@ function CommandRow({ cmd, stepId, isSelected }: CommandRowProps) {
     selectCommand(isSelected ? null : cmd.id);
   };
 
-  const abbr = CMD_TYPE_ABBR[cmd.type] ?? '?';
-  const cls  = CMD_TYPE_CLS[cmd.type]  ?? 'bg-zinc-700/60 text-zinc-400 border-zinc-600/40';
+  const abbr = cmdAbbr(cmd);
+  const cls  = cmdCls(cmd);
 
   return (
     <div
@@ -90,6 +94,72 @@ function CommandRow({ cmd, stepId, isSelected }: CommandRowProps) {
   );
 }
 
+// ─── Enable-If command block ──────────────────────────────────────────────────
+
+function EnableIfCommandBlock({ cmd, stepId }: { cmd: EnableIfCommand; stepId: StepId }) {
+  const { selectedCommandId, selectStep, selectCommand, deleteRasterCommand, addCommandToEnableIf } = useStore();
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const isSelected = selectedCommandId === cmd.id;
+
+  const CHILD_OPTIONS: { type: RasterCommandType; drawType?: DrawBatchType; label: string }[] = [
+    { type: 'setDynamicState',                             label: 'Set Dynamic State' },
+    { type: 'drawBatch', drawType: 'batch',                label: 'Draw Batch' },
+    { type: 'drawBatch', drawType: 'batchWithMaterials',   label: 'Draw Batch (Materials)' },
+    { type: 'drawBatch', drawType: 'fullscreen',           label: 'Draw Fullscreen' },
+    { type: 'drawBatch', drawType: 'debugLines',           label: 'Draw Debug Lines' },
+  ];
+
+  return (
+    <div className="border-b border-zinc-800/40">
+      {/* Header row */}
+      <div
+        onClick={() => { selectStep(stepId); selectCommand(isSelected ? null : cmd.id); }}
+        className={`group flex items-center gap-2 pl-6 pr-2 py-1.5 cursor-pointer hover:bg-zinc-800/30 select-none border-l-2
+          ${isSelected ? 'bg-teal-900/10 border-l-teal-400' : 'border-l-transparent'}`}
+      >
+        <span className="text-[9px] font-mono px-1 py-0.5 rounded border shrink-0 bg-teal-900/60 text-teal-300 border-teal-700/50">IF</span>
+        <span className="flex-1 text-xs text-zinc-300 truncate">{cmd.name}</span>
+        {cmd.condition && (
+          <span className="text-[9px] text-teal-500 font-mono truncate max-w-24" title={cmd.condition}>{cmd.condition}</span>
+        )}
+        <div className="hidden group-hover:flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => deleteRasterCommand(stepId, cmd.id)} className="p-0.5 text-zinc-600 hover:text-red-400 text-xs rounded">✕</button>
+        </div>
+      </div>
+
+      {/* Children */}
+      <div className="pl-4 border-l border-teal-900/40 ml-6">
+        {cmd.thenCommands.length === 0 && (
+          <div className="px-3 py-1 text-[10px] text-zinc-700 italic">No commands.</div>
+        )}
+        {cmd.thenCommands.map((child) => (
+          <CommandRow key={child.id} cmd={child} stepId={stepId} isSelected={selectedCommandId === child.id} />
+        ))}
+        {/* Add child */}
+        <div className="relative px-2 py-1">
+          <button
+            onClick={() => setShowAddMenu(!showAddMenu)}
+            className="text-[10px] text-zinc-600 hover:text-zinc-400 border border-dashed border-zinc-700/40 hover:border-zinc-600 rounded px-2 py-0.5 w-full text-left"
+          >+ Add</button>
+          {showAddMenu && (
+            <div className="absolute left-2 top-full z-50 bg-zinc-800 border border-zinc-600 rounded shadow-xl w-44 overflow-hidden">
+              {CHILD_OPTIONS.map(({ type, drawType, label }) => (
+                <button
+                  key={label}
+                  className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700"
+                  onClick={() => { addCommandToEnableIf(stepId, cmd.id, type, drawType); setShowAddMenu(false); }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Attachment summary chip ───────────────────────────────────────────────────
 
 function AttachmentSummary({ step }: { step: RasterStep }) {
@@ -123,9 +193,17 @@ function AttachmentSummary({ step }: { step: RasterStep }) {
 
 // ─── Main block ────────────────────────────────────────────────────────────────
 
-const CMD_TYPE_OPTIONS = [
-  { type: 'setDynamicState' as const, label: 'Set Dynamic State' },
-  { type: 'drawBatch' as const,       label: 'Draw Batch' },
+import type { DrawBatchType } from '../../types';
+
+import type { RasterCommandType } from '../../types';
+
+const CMD_TYPE_OPTIONS: { type: RasterCommandType; drawType?: DrawBatchType; label: string }[] = [
+  { type: 'setDynamicState',                              label: 'Set Dynamic State' },
+  { type: 'drawBatch', drawType: 'batch',                 label: 'Draw Batch' },
+  { type: 'drawBatch', drawType: 'batchWithMaterials',    label: 'Draw Batch (Materials)' },
+  { type: 'drawBatch', drawType: 'fullscreen',            label: 'Draw Fullscreen' },
+  { type: 'drawBatch', drawType: 'debugLines',            label: 'Draw Debug Lines' },
+  { type: 'enableIf',                                     label: 'Enable If' },
 ];
 
 interface RasterStepBlockProps {
@@ -224,14 +302,18 @@ export function RasterStepBlock({ passId, stepId }: RasterStepBlockProps) {
 
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={step.commands.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-              {step.commands.map((cmd) => (
-                <CommandRow
-                  key={cmd.id}
-                  cmd={cmd}
-                  stepId={stepId}
-                  isSelected={selectedCommandId === cmd.id && isStepSelected}
-                />
-              ))}
+              {step.commands.map((cmd) =>
+                cmd.type === 'enableIf' ? (
+                  <EnableIfCommandBlock key={cmd.id} cmd={cmd} stepId={stepId} />
+                ) : (
+                  <CommandRow
+                    key={cmd.id}
+                    cmd={cmd}
+                    stepId={stepId}
+                    isSelected={selectedCommandId === cmd.id && isStepSelected}
+                  />
+                )
+              )}
             </SortableContext>
           </DndContext>
 
@@ -249,12 +331,12 @@ export function RasterStepBlock({ passId, stepId }: RasterStepBlockProps) {
             </button>
             {showAddMenu && (
               <div className="absolute left-6 top-full z-50 bg-zinc-800 border border-zinc-600 rounded shadow-xl w-44 overflow-hidden">
-                {CMD_TYPE_OPTIONS.map(({ type, label }) => (
+                {CMD_TYPE_OPTIONS.map(({ type, drawType, label }) => (
                   <button
-                    key={type}
+                    key={label}
                     className="w-full text-left px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-700"
                     onClick={() => {
-                      addRasterCommand(stepId, type);
+                      addRasterCommand(stepId, type, drawType);
                       selectStep(stepId);
                       setShowAddMenu(false);
                     }}

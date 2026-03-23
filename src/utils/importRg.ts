@@ -824,7 +824,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
 
                     const DRAW_TYPE_MAP: Record<number, DrawBatchType> = {
                         1: "batch",
-                        2: "batch",
+                        2: "batchWithMaterials",
                         8: "fullscreen",
                         16: "debugLines",
                     };
