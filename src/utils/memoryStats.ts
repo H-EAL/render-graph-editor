@@ -1,4 +1,4 @@
-import type { ResourceLibrary, TextureFormat, Pipeline, Pass } from '../types';
+import type { ResourceLibrary, TextureFormat, Pipeline, Pass, RasterCommand, Step } from '../types';
 import { collectValueSourceResourceIds } from './valueSource';
 
 // ─── Viewport ─────────────────────────────────────────────────────────────────
@@ -165,7 +165,9 @@ export interface PipelineMemStats {
   passOverview: PassOverview;
   timelineCount: number;
   stepCount: number;
+  stepsByType: Record<string, number>;
   shadersByStage: Record<string, number>;
+  uniqueConditionCount: number;
   /** null when there are no timelines/passes to derive lifetimes from. */
   aliasing: AliasingStats | null;
 }
@@ -315,6 +317,35 @@ export function computeMemStats(
     shadersByStage[sh.stage] = (shadersByStage[sh.stage] ?? 0) + 1;
   }
 
+  // ── Unique conditions ─────────────────────────────────────────────────────
+  function collectCommandConditions(cmds: RasterCommand[], conds: Set<string>) {
+    for (const cmd of cmds) {
+      if (cmd.type === 'enableIf') {
+        conds.add(cmd.condition);
+        collectCommandConditions(cmd.thenCommands, conds);
+      }
+    }
+  }
+
+  const allConditions = new Set<string>();
+  for (const pass of Object.values(pipeline.passes)) {
+    for (const c of pass.conditions ?? []) allConditions.add(c);
+  }
+  for (const step of Object.values(pipeline.steps) as Step[]) {
+    for (const c of step.conditions ?? []) allConditions.add(c);
+    if (step.type === 'ifBlock') allConditions.add(step.condition);
+    if (step.type === 'enableIf') allConditions.add(step.condition);
+    if (step.type === 'raster') collectCommandConditions(step.commands, allConditions);
+  }
+  const uniqueConditionCount = allConditions.size;
+
+  // ── Step counts by type (exclude containers) ──────────────────────────────
+  const stepsByType: Record<string, number> = {};
+  for (const step of Object.values(pipeline.steps) as Step[]) {
+    if (step.type === 'ifBlock' || step.type === 'enableIf') continue;
+    stepsByType[step.type] = (stepsByType[step.type] ?? 0) + 1;
+  }
+
   return {
     renderTargets,
     buffers,
@@ -330,7 +361,9 @@ export function computeMemStats(
     },
     timelineCount: pipeline.timelines.length,
     stepCount:     Object.keys(pipeline.steps).length,
+    stepsByType,
     shadersByStage,
+    uniqueConditionCount,
   };
 }
 

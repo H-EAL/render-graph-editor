@@ -405,20 +405,61 @@ export function StatsModal({ onClose }: { onClose: () => void }) {
           {/* Pipeline overview */}
           <div>
             <SectionHead label="Pipeline Overview" />
-            <div className="grid grid-cols-2 gap-x-8 gap-y-1">
-              {[
-                ['Timelines',    String(stats.timelineCount)],
-                ['Total passes', `${stats.passOverview.total} (${stats.passOverview.enabled} enabled)`],
-                ['Conditional',  `${stats.passOverview.conditional} pass${stats.passOverview.conditional !== 1 ? 'es' : ''}`],
-                ['Steps',        String(stats.stepCount)],
-                ...Object.entries(stats.passOverview.byKind).map(([k, v]) => [`${k.charAt(0).toUpperCase() + k.slice(1)} passes`, String(v)]),
-                ...Object.entries(stats.shadersByStage).map(([s, v]) => [`${s.charAt(0).toUpperCase() + s.slice(1)} shaders`, String(v)]),
-              ].map(([label, value]) => (
-                <div key={label} className="flex items-center justify-between text-xs py-0.5 border-b border-zinc-800/50">
-                  <span className="text-zinc-500">{label}</span>
-                  <span className="font-mono text-zinc-300">{value}</span>
+            <div className="flex flex-col gap-3">
+
+              {/* Passes */}
+              <div>
+                <div className="text-[10px] text-zinc-600 uppercase tracking-widest mb-1">Passes</div>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-0">
+                  {([
+                    ['Total',       `${stats.passOverview.total} (${stats.passOverview.enabled} enabled)`],
+                    ['Conditional', String(stats.passOverview.conditional)],
+                    ...Object.entries(stats.passOverview.byKind).map(([k, v]): [string, string] => [
+                      k.charAt(0).toUpperCase() + k.slice(1), String(v),
+                    ]),
+                  ] as [string, string][]).map(([label, value]) => (
+                    <div key={label} className="flex items-center justify-between text-xs py-0.5 border-b border-zinc-800/50">
+                      <span className="text-zinc-500">{label}</span>
+                      <span className="font-mono text-zinc-300">{value}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
+
+              {/* Steps */}
+              <div>
+                <div className="text-[10px] text-zinc-600 uppercase tracking-widest mb-1">Steps</div>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-0">
+                  {([
+                    ['Total', String(stats.stepCount)],
+                    ...Object.entries(stats.stepsByType).map(([k, v]): [string, string] => [k, String(v)]),
+                  ] as [string, string][]).map(([label, value]) => (
+                    <div key={label} className="flex items-center justify-between text-xs py-0.5 border-b border-zinc-800/50">
+                      <span className="text-zinc-500">{label}</span>
+                      <span className="font-mono text-zinc-300">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Conditions & Shaders */}
+              <div>
+                <div className="text-[10px] text-zinc-600 uppercase tracking-widest mb-1">Inputs & Shaders</div>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-0">
+                  {([
+                    ['Unique conditions', String(stats.uniqueConditionCount)],
+                    ...Object.entries(stats.shadersByStage).map(([s, v]): [string, string] => [
+                      s.charAt(0).toUpperCase() + s.slice(1) + ' shaders', String(v),
+                    ]),
+                  ] as [string, string][]).map(([label, value]) => (
+                    <div key={label} className="flex items-center justify-between text-xs py-0.5 border-b border-zinc-800/50">
+                      <span className="text-zinc-500">{label}</span>
+                      <span className="font-mono text-zinc-300">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
             </div>
           </div>
 
