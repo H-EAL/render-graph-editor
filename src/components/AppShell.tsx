@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useStore } from "../state/store";
+import type { PipelineRole } from "../types";
 import { examples, type ExampleId } from "../data/seed";
 import { getApiKey, setApiKey } from "../utils/shaderApi";
 import { PipelineTimelineView } from "../features/pipeline/PipelineTimelineView";
@@ -120,6 +121,15 @@ function ApiKeyButton() {
     );
 }
 
+// ─── Pipeline tab bar ─────────────────────────────────────────────────────────
+
+const ROLE_LABEL: Record<PipelineRole, string> = { global: "Global", perView: "Per-View" };
+
+const PIPELINE_TABS: { role: PipelineRole; index: number }[] = [
+    { role: "global",  index: 0 },
+    { role: "perView", index: 1 },
+];
+
 // ─── Pipeline header ──────────────────────────────────────────────────────────
 
 function PipelineHeader({
@@ -137,96 +147,136 @@ function PipelineHeader({
     onOpenSearch: () => void;
     onOpenInputs: () => void;
 }) {
-    const { pipeline, setPipelineName } = useStore();
+    const { pipeline } = useStore();
+    const pipelines             = useStore((s) => s.pipelines);
+    const activePipelineIndex   = useStore((s) => s.activePipelineIndex);
+    const setActivePipeline     = useStore((s) => s.setActivePipeline);
+    const setPipelineEntryName  = useStore((s) => s.setPipelineEntryName);
+
+    // Always show and edit the per-view pipeline name (index 1) — it's the
+    // canonical render graph name and must not change when switching tabs.
+    const perViewEntry = pipelines[1];
+    const displayName  = perViewEntry?.pipeline.name ?? pipeline.name;
+
     const [editing, setEditing] = useState(false);
-    const [name, setName] = useState(pipeline.name);
+    const [name, setName] = useState(displayName);
     const commit = () => {
         const t = name.trim();
-        if (t) setPipelineName(t);
+        if (t) setPipelineEntryName(1, t);
         setEditing(false);
     };
     return (
-        <div className="flex items-center gap-3 px-4 py-2 bg-zinc-900 border-b border-zinc-700/80 shrink-0">
-            <span className="text-xs font-bold text-zinc-500 tracking-tight shrink-0">
-                Render Pipeline Editor
-            </span>
-            <span className="text-zinc-700">·</span>
-            {editing ? (
-                <input
-                    autoFocus
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    onBlur={commit}
-                    onKeyDown={(e) => {
-                        if (e.key === "Enter") commit();
-                        if (e.key === "Escape") setEditing(false);
-                    }}
-                    className="bg-zinc-800 border border-zinc-600 text-zinc-100 text-sm font-semibold rounded px-2 py-0.5 focus:outline-none"
-                />
-            ) : (
-                <button
-                    className="text-sm font-semibold text-zinc-200 hover:text-white"
-                    onDoubleClick={() => {
-                        setName(pipeline.name);
-                        setEditing(true);
-                    }}
-                    title="Double-click to rename"
-                >
-                    {pipeline.name}
-                </button>
-            )}
-            <span className="text-[10px] text-zinc-600 font-mono">v{pipeline.version}</span>
-            <div className="flex-1" />
+        <div className="flex items-stretch h-11 bg-zinc-900 border-b border-zinc-700/60 shrink-0">
 
-            {/* Example switcher */}
-            <div className="flex items-center gap-0.5 bg-zinc-800/60 border border-zinc-700/60 rounded p-0.5">
-                {examples.map((ex) => (
+            {/* Identity — app label + graph name + version */}
+            <div className="flex items-center gap-2.5 px-4 border-r border-zinc-800 shrink-0">
+                <span className="text-[10px] font-bold text-zinc-600 tracking-widest uppercase select-none">
+                    RGE
+                </span>
+                <span className="w-px h-4 bg-zinc-700/80" />
+                {editing ? (
+                    <input
+                        autoFocus
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        onBlur={commit}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") commit();
+                            if (e.key === "Escape") setEditing(false);
+                        }}
+                        className="bg-zinc-800 border border-zinc-600 text-zinc-100 text-sm font-semibold rounded px-2 py-0.5 w-48 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                    />
+                ) : (
                     <button
-                        key={ex.id}
-                        onClick={() => onSelectExample(ex.id)}
-                        className={`text-[10px] px-2 py-0.5 rounded font-mono transition-colors
-              ${
-                  activeExample === ex.id
-                      ? "bg-zinc-600 text-zinc-100"
-                      : "text-zinc-500 hover:text-zinc-300"
-              }`}
+                        className="text-[13px] font-semibold text-zinc-200 hover:text-white transition-colors"
+                        onDoubleClick={() => { setName(displayName); setEditing(true); }}
+                        title="Double-click to rename"
                     >
-                        {ex.label}
+                        {displayName}
                     </button>
-                ))}
+                )}
+                <span className="text-[10px] text-zinc-600 font-mono tabular-nums">v{pipeline.version}</span>
             </div>
 
-            <button
-                onClick={onOpenSearch}
-                title="Global search (Ctrl+K)"
-                className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded border bg-zinc-800/60 border-zinc-700/60 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600 transition-colors"
-            >
-                <span>⌕</span>
-                <kbd className="font-mono text-[10px] text-zinc-600">Ctrl K</kbd>
-            </button>
+            {/* Pipeline tabs — sit at bottom, look like real tabs */}
+            <div className="flex items-end self-stretch pl-3 gap-1">
+                {PIPELINE_TABS.map(({ role, index }) => {
+                    const active = index === activePipelineIndex;
+                    return (
+                        <button
+                            key={role}
+                            onClick={() => setActivePipeline(index)}
+                            title={role === "global"
+                                ? "Global pipeline — runs once at load time to prepare shared resources"
+                                : "Per-View pipeline — runs each frame, has access to global resources"}
+                            className={`relative px-6 h-8 text-xs font-medium rounded-t border-t border-l border-r transition-colors ${
+                                active
+                                    ? role === "global"
+                                        ? "bg-zinc-800 border-zinc-700 text-amber-300 shadow-[inset_0_2px_0_0_theme(colors.amber.500)]"
+                                        : "bg-zinc-800 border-zinc-700 text-sky-300 shadow-[inset_0_2px_0_0_theme(colors.sky.500)]"
+                                    : "bg-transparent border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 hover:border-zinc-700/60"
+                            }`}
+                        >
+                            {ROLE_LABEL[role]}
+                        </button>
+                    );
+                })}
+            </div>
 
-            <button
-                onClick={onOpenInputs}
-                title="Open Render Graph Input Editor"
-                className="text-[11px] px-2.5 py-1 rounded border font-mono transition-colors bg-zinc-800/60 border-zinc-700/60 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600"
-            >
-                Inputs
-            </button>
+            <div className="flex-1" />
 
-            <ApiKeyButton />
+            {/* Right actions */}
+            <div className="flex items-center gap-1 px-3 border-l border-zinc-800">
+                {/* Example switcher */}
+                <div className="flex items-center bg-zinc-800/50 rounded overflow-hidden mr-2">
+                    {examples.map((ex) => (
+                        <button
+                            key={ex.id}
+                            onClick={() => onSelectExample(ex.id)}
+                            className={`text-[10px] px-2.5 h-6 font-mono transition-colors ${
+                                activeExample === ex.id
+                                    ? "bg-zinc-600 text-zinc-100"
+                                    : "text-zinc-500 hover:text-zinc-300"
+                            }`}
+                        >
+                            {ex.label}
+                        </button>
+                    ))}
+                </div>
 
-            <button
-                onClick={onToggleJson}
-                title="Toggle JSON viewer"
-                className={`text-[11px] px-2.5 py-1 rounded border font-mono transition-colors
-          ${
-              jsonOpen
-                  ? "bg-zinc-700 border-zinc-500 text-zinc-200"
-                  : "bg-zinc-800/60 border-zinc-700/60 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600"
-          }`}
-            >
-                {"{ }"}
-            </button>
+                <button
+                    onClick={onOpenSearch}
+                    title="Global search (Ctrl+K)"
+                    className="flex items-center gap-1.5 px-2.5 h-7 text-[11px] text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors"
+                >
+                    <span>⌕</span>
+                    <kbd className="font-mono text-[10px] text-zinc-600">Ctrl K</kbd>
+                </button>
+
+                <div className="w-px h-4 bg-zinc-800 mx-0.5" />
+
+                <button
+                    onClick={onOpenInputs}
+                    title="Open Render Graph Input Editor"
+                    className="px-2.5 h-7 text-[11px] text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors"
+                >
+                    Inputs
+                </button>
+
+                <ApiKeyButton />
+
+                <button
+                    onClick={onToggleJson}
+                    title="Toggle JSON viewer"
+                    className={`px-2.5 h-7 text-[11px] font-mono rounded transition-colors ${
+                        jsonOpen
+                            ? "bg-zinc-700 text-zinc-200"
+                            : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
+                    }`}
+                >
+                    {"{ }"}
+                </button>
+            </div>
         </div>
     );
 }
@@ -284,7 +334,19 @@ function StatusBar({
     onOpenStats: () => void;
 }) {
     const { pipeline, resources, inputDefinitions } = useStore();
-    const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions), [pipeline, resources, inputDefinitions]);
+    const globalPipeline = useStore((s) => s.pipelines[0]?.pipeline);
+    const globalWrittenIds = useMemo(() => {
+        if (!globalPipeline) return undefined;
+        const ids = new Set<string>();
+        for (const pass of Object.values(globalPipeline.passes)) {
+            pass.writes.forEach((id) => ids.add(id));
+        }
+        for (const step of Object.values(globalPipeline.steps)) {
+            (step.writes ?? []).forEach((id) => ids.add(id));
+        }
+        return ids;
+    }, [globalPipeline]);
+    const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions, globalWrittenIds), [pipeline, resources, inputDefinitions, globalWrittenIds]);
     const errors = issues.filter((i) => i.severity === "error");
     const warnings = issues.filter((i) => i.severity === "warning");
     const vram = useMemo(
@@ -354,7 +416,19 @@ function StatusBar({
 
 function ValidationPopover({ onClose }: { onClose: () => void }) {
     const { pipeline, resources, inputDefinitions } = useStore();
-    const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions), [pipeline, resources, inputDefinitions]);
+    const globalPipeline = useStore((s) => s.pipelines[0]?.pipeline);
+    const globalWrittenIds = useMemo(() => {
+        if (!globalPipeline) return undefined;
+        const ids = new Set<string>();
+        for (const pass of Object.values(globalPipeline.passes)) {
+            pass.writes.forEach((id) => ids.add(id));
+        }
+        for (const step of Object.values(globalPipeline.steps)) {
+            (step.writes ?? []).forEach((id) => ids.add(id));
+        }
+        return ids;
+    }, [globalPipeline]);
+    const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions, globalWrittenIds), [pipeline, resources, inputDefinitions, globalWrittenIds]);
     const errors = issues.filter((i) => i.severity === "error");
     const warnings = issues.filter((i) => i.severity === "warning");
     const ref = useRef<HTMLDivElement>(null);

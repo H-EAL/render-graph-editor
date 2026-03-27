@@ -8,6 +8,10 @@ export function validateDocument(
     pipeline: Pipeline,
     resources: ResourceLibrary,
     inputDefinitions?: InputDefinition[],
+    /** Resource IDs written by a sibling pipeline (e.g. the global pipeline).
+     *  These are treated as always-available external writes — reads of these
+     *  resources never trigger a "no prior write" warning. */
+    externalWrittenIds?: Set<string>,
 ): ValidationIssue[] {
     const issues: ValidationIssue[] = [];
 
@@ -361,6 +365,7 @@ export function validateDocument(
 
         for (const [rid, readers] of resReaders) {
             if (inputParamIds.has(rid)) continue; // inputs are read-only, no write expected
+            if (externalWrittenIds?.has(rid)) continue; // written by another pipeline (e.g. global)
             const writers = resWriters.get(rid) ?? [];
             const resName = resourceNames.get(rid) ?? rid;
             for (const reader of readers) {

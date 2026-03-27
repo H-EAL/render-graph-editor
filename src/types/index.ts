@@ -492,8 +492,18 @@ export interface Pipeline {
 
 // ─── Full Document ────────────────────────────────────────────────────────────
 
-export interface PipelineDocument {
+export type PipelineRole = "perView" | "global";
+
+export interface PipelineEntry {
     pipeline: Pipeline;
+    role: PipelineRole;
+}
+
+export interface PipelineDocument {
+    /** New multi-pipeline format */
+    pipelines?: PipelineEntry[];
+    /** Legacy single-pipeline format (backward compat) */
+    pipeline?: Pipeline;
     resources: ResourceLibrary;
     inputDefinitions?: InputDefinition[];
 }

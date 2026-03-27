@@ -4,7 +4,19 @@ import { validateDocument } from '../validation';
 
 export function ValidationPanel() {
   const { pipeline, resources, inputDefinitions } = useStore();
-  const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions), [pipeline, resources, inputDefinitions]);
+  const globalPipeline = useStore((s) => s.pipelines[0]?.pipeline);
+  const globalWrittenIds = useMemo(() => {
+    if (!globalPipeline) return undefined;
+    const ids = new Set<string>();
+    for (const pass of Object.values(globalPipeline.passes)) {
+      pass.writes.forEach((id) => ids.add(id));
+    }
+    for (const step of Object.values(globalPipeline.steps)) {
+      (step.writes ?? []).forEach((id) => ids.add(id));
+    }
+    return ids;
+  }, [globalPipeline]);
+  const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions, globalWrittenIds), [pipeline, resources, inputDefinitions, globalWrittenIds]);
 
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');

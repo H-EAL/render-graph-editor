@@ -369,6 +369,8 @@ function isGpuToCpu(desc?: string): boolean {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function PipelineTimelineView() {
+    const activePipelineRole = useStore((s) => s.pipelines[s.activePipelineIndex]?.role);
+
     const {
         pipeline,
         resources,
@@ -775,11 +777,29 @@ export function PipelineTimelineView() {
         [resources.renderTargets, resources.buffers, resources.inputParameters, resources.blendStates, resources.materialInterfaces],
     );
 
+    /** When viewing the global pipeline, only show resources it actually references. */
+    const globalPipelineResIds = useMemo(() => {
+        if (activePipelineRole !== "global") return null;
+        const ids = new Set<ResourceId>();
+        for (const pass of Object.values(pipeline.passes)) {
+            pass.reads.forEach((id) => ids.add(id));
+            pass.writes.forEach((id) => ids.add(id));
+        }
+        for (const step of Object.values(pipeline.steps)) {
+            (step.reads ?? []).forEach((id) => ids.add(id));
+            (step.writes ?? []).forEach((id) => ids.add(id));
+        }
+        return ids;
+    }, [activePipelineRole, pipeline.passes, pipeline.steps]);
+
     const overlayRows = useMemo(() => {
         return resourceOrder.filter(
-            (id) => validResIds.has(id) && (showHidden || !hiddenSet.has(id)),
+            (id) =>
+                validResIds.has(id) &&
+                (showHidden || !hiddenSet.has(id)) &&
+                (globalPipelineResIds === null || globalPipelineResIds.has(id)),
         );
-    }, [resourceOrder, validResIds, showHidden, hiddenSet]);
+    }, [resourceOrder, validResIds, showHidden, hiddenSet, globalPipelineResIds]);
 
     const layout = useLayout(pipeline, allEdges, overlayRows.length);
 

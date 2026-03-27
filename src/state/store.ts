@@ -5,6 +5,8 @@ import { rgDocument } from "../data/seed";
 import { fetchShaderDescriptor } from "../utils/shaderApi";
 import type {
     Pipeline,
+    PipelineRole,
+    PipelineEntry,
     Pass,
     PassId,
     Step,
@@ -229,6 +231,11 @@ function resourceOrderFromLibrary(resources: ResourceLibrary): ResourceId[] {
 
 export interface AppState {
     // Data
+    /** All pipelines in the document */
+    pipelines: PipelineEntry[];
+    /** Index of the pipeline currently being edited */
+    activePipelineIndex: number;
+    /** The active pipeline (mirrors pipelines[activePipelineIndex].pipeline) */
     pipeline: Pipeline;
     resources: ResourceLibrary;
     inputDefinitions: InputDefinition[];
@@ -248,6 +255,12 @@ export interface AppState {
     setConditionOverride: (name: string, val: boolean | undefined) => void;
     clearConditionOverrides: () => void;
 
+    // ── Multi-pipeline actions ─────────────────────────────────────────────────
+    addPipeline: (role: PipelineRole) => void;
+    deletePipeline: (index: number) => void;
+    setPipelineRole: (index: number, role: PipelineRole) => void;
+    setActivePipeline: (index: number) => void;
+
     // ── Timeline actions ──────────────────────────────────────────────────────
     addTimeline: (type?: TimelineType) => void;
     deleteTimeline: (id: TimelineId) => void;
@@ -256,6 +269,8 @@ export interface AppState {
 
     // ── Pass actions ──────────────────────────────────────────────────────────
     setPipelineName: (name: string) => void;
+    /** Rename a pipeline by its index in the pipelines array (works regardless of active tab). */
+    setPipelineEntryName: (index: number, name: string) => void;
     addPass: (timelineId: TimelineId, insertAt?: number) => void;
     deletePass: (id: PassId) => void;
     duplicatePass: (id: PassId) => void;
@@ -396,9 +411,38 @@ function getRasterStep(pipeline: Pipeline, stepId: StepId): RasterStep | null {
     return step as RasterStep;
 }
 
+function makeEmptyPipeline(role: PipelineRole): Pipeline {
+    return {
+        id: newId(),
+        name: role === "global" ? "Global Pipeline" : "Per-View Pipeline",
+        version: 1,
+        timelines: [],
+        passes: {},
+        steps: {},
+    };
+}
+
+/** Always produce exactly [global, perView] entries from a raw pipelines array. */
+function normalizePipelines(
+    raw: PipelineEntry[] | undefined,
+    legacySingle: Pipeline | undefined,
+): [PipelineEntry, PipelineEntry] {
+    const global  = raw?.find((e) => e.role === "global");
+    const perView = raw?.find((e) => e.role === "perView");
+    const fallbackPerView = legacySingle ?? makeEmptyPipeline("perView");
+    return [
+        global  ?? { pipeline: makeEmptyPipeline("global"),  role: "global"  },
+        perView ?? { pipeline: fallbackPerView,               role: "perView" },
+    ];
+}
+
+const initialPipelines = normalizePipelines(rgDocument.pipelines, rgDocument.pipeline);
+
 export const useStore = create<AppState>()(
     subscribeWithSelector((set, get) => ({
-        pipeline: rgDocument.pipeline,
+        pipelines: initialPipelines,
+        activePipelineIndex: 1,
+        pipeline: initialPipelines[1].pipeline,
         resources: rgDocument.resources,
         inputDefinitions: defaultInputDefinitions,
         selectedPassId: null,
@@ -418,6 +462,74 @@ export const useStore = create<AppState>()(
             }),
 
         clearConditionOverrides: () => set({ conditionOverrides: {} }),
+
+        // ── Multi-pipeline ─────────────────────────────────────────────────────
+        addPipeline: (role) =>
+            set((s) => {
+                const newPipeline = makeEmptyPipeline(role);
+                // Flush current edits back into the pipelines array
+                const pipelines = s.pipelines.map((e, i) =>
+                    i === s.activePipelineIndex ? { ...e, pipeline: s.pipeline } : e,
+                );
+                const newIndex = pipelines.length;
+                return {
+                    pipelines: [...pipelines, { pipeline: newPipeline, role }],
+                    activePipelineIndex: newIndex,
+                    pipeline: newPipeline,
+                    selectedPassId: null,
+                    selectedStepId: null,
+                    selectedCommandId: null,
+                    conditionOverrides: {},
+                };
+            }),
+
+        deletePipeline: (index) =>
+            set((s) => {
+                if (s.pipelines.length <= 1) return {};
+                // Flush current edits back
+                const pipelines = s.pipelines.map((e, i) =>
+                    i === s.activePipelineIndex ? { ...e, pipeline: s.pipeline } : e,
+                );
+                const next = pipelines.filter((_, i) => i !== index);
+                const newIndex = Math.max(0, index <= s.activePipelineIndex
+                    ? s.activePipelineIndex - 1
+                    : s.activePipelineIndex);
+                return {
+                    pipelines: next,
+                    activePipelineIndex: newIndex,
+                    pipeline: next[newIndex].pipeline,
+                    selectedPassId: null,
+                    selectedStepId: null,
+                    selectedCommandId: null,
+                    conditionOverrides: {},
+                };
+            }),
+
+        setPipelineRole: (index, role) =>
+            set((s) => ({
+                pipelines: s.pipelines.map((e, i) =>
+                    i === index
+                        ? { pipeline: i === s.activePipelineIndex ? s.pipeline : e.pipeline, role }
+                        : e,
+                ),
+            })),
+
+        setActivePipeline: (index) =>
+            set((s) => {
+                if (index === s.activePipelineIndex) return {};
+                const pipelines = s.pipelines.map((e, i) =>
+                    i === s.activePipelineIndex ? { ...e, pipeline: s.pipeline } : e,
+                );
+                return {
+                    pipelines,
+                    activePipelineIndex: index,
+                    pipeline: pipelines[index].pipeline,
+                    selectedPassId: null,
+                    selectedStepId: null,
+                    selectedCommandId: null,
+                    conditionOverrides: {},
+                };
+            }),
 
         // ── Timelines ─────────────────────────────────────────────────────────
         addTimeline: (type = "graphics") =>
@@ -476,6 +588,17 @@ export const useStore = create<AppState>()(
 
         // ── Pipeline / Pass ───────────────────────────────────────────────────
         setPipelineName: (name) => set((s) => ({ pipeline: { ...s.pipeline, name } })),
+
+        setPipelineEntryName: (index, name) =>
+            set((s) => {
+                const pipelines = s.pipelines.map((e, i) =>
+                    i === index ? { ...e, pipeline: { ...e.pipeline, name } } : e,
+                );
+                // Also update the live pipeline if this is the active one
+                return index === s.activePipelineIndex
+                    ? { pipelines, pipeline: { ...s.pipeline, name } }
+                    : { pipelines };
+            }),
 
         addPass: (timelineId, insertAt) =>
             set((s) => {
@@ -1841,8 +1964,14 @@ export const useStore = create<AppState>()(
                     materialInterfaces: [],
                     ...doc.resources,
                 };
+                // Normalize to always [global, perView]
+                const rawPipelines = Array.isArray(doc.pipelines) ? doc.pipelines as PipelineEntry[] : undefined;
+                if (!rawPipelines && !doc.pipeline) throw new Error("No pipeline found in document");
+                const pipelines = normalizePipelines(rawPipelines, doc.pipeline as Pipeline | undefined);
                 set({
-                    pipeline: doc.pipeline,
+                    pipelines,
+                    activePipelineIndex: 1,
+                    pipeline: pipelines[1].pipeline,
                     resources,
                     inputDefinitions: doc.inputDefinitions ?? defaultInputDefinitions,
                     selectedPassId: null,
@@ -1859,8 +1988,12 @@ export const useStore = create<AppState>()(
         },
 
         getDocumentJson: () => {
-            const { pipeline, resources } = get();
-            return JSON.stringify({ pipeline, resources }, null, 2);
+            const { pipeline, pipelines, activePipelineIndex, resources, inputDefinitions } = get();
+            // Flush the active pipeline's current edits before serializing
+            const syncedPipelines = pipelines.map((entry, i) =>
+                i === activePipelineIndex ? { ...entry, pipeline } : entry,
+            );
+            return JSON.stringify({ pipelines: syncedPipelines, resources, inputDefinitions }, null, 2);
         },
 
         resolveShaderNames: async () => {
