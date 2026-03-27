@@ -46,46 +46,58 @@ function resolveSize(expr: number | string, vp: ViewportSize, axis: 'w' | 'h'): 
 }
 
 /**
- * Collect every resource ID referenced by a pass, including all nested
- * step reads/writes (handles ifBlock/enableIf branches recursively).
+ * Collect RT IDs for a pass separated by usage kind:
+ * - colorIds:   RTs used as color attachments
+ * - depthIds:   RTs used as depth/stencil attachments
+ * - resolveIds: RTs used as resolve attachments
+ * - bindingIds: RTs read as shader inputs
  */
-function collectPassResourceIds(
+function collectPassUsageIds(
   pass: Pass,
   allSteps: Pipeline['steps'],
   validIds: Set<string>,
-): Set<string> {
-  const out = new Set<string>();
+): { colorIds: Set<string>; depthIds: Set<string>; resolveIds: Set<string>; bindingIds: Set<string> } {
+  const colorIds   = new Set<string>();
+  const depthIds   = new Set<string>();
+  const resolveIds = new Set<string>();
+  const bindingIds = new Set<string>();
+  const addColor   = (id: string) => { if (validIds.has(id)) colorIds.add(id); };
+  const addDepth   = (id: string) => { if (validIds.has(id)) depthIds.add(id); };
+  const addResolve = (id: string) => { if (validIds.has(id)) resolveIds.add(id); };
+  const addBinding = (id: string) => { if (validIds.has(id)) bindingIds.add(id); };
 
-  const addIfValid = (id: string) => { if (validIds.has(id)) out.add(id); };
+  for (const id of pass.reads ?? []) addBinding(id);
 
-  // Pass-level reads/writes (populated by the importer)
-  for (const id of [...(pass.reads ?? []), ...(pass.writes ?? [])]) addIfValid(id);
-
-  // Walk the full step tree so user-created passes are covered too
   function walkSteps(stepIds: string[]) {
     for (const sid of stepIds) {
       const step = allSteps[sid];
       if (!step) continue;
-      for (const id of [...(step.reads ?? []), ...(step.writes ?? [])]) addIfValid(id);
+      for (const id of step.reads ?? []) addBinding(id);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const s = step as any;
-      // Collect shader binding resource IDs (compute / RT / decals steps)
-      if (s.shaderBindings) {
-        for (const id of Object.values(s.shaderBindings as Record<string, string>)) addIfValid(id);
+      // Raster step: classify attachments by kind
+      if (step.type === 'raster' && s.attachments) {
+        for (const ca of s.attachments.colorAttachments ?? []) addColor(ca.target);
+        if (s.attachments.depthAttachment?.target) addDepth(s.attachments.depthAttachment.target);
+        for (const ra of s.attachments.resolveAttachments ?? []) addResolve(ra.destination);
+      } else {
+        // Non-raster steps: writes treated as generic attachments (color bucket)
+        for (const id of step.writes ?? []) addColor(id);
       }
-      // Collect per-command shader binding resource IDs (raster steps)
+      if (s.shaderBindings) {
+        for (const id of Object.values(s.shaderBindings as Record<string, string>)) addBinding(id);
+      }
       if (Array.isArray(s.commands)) {
         for (const cmd of s.commands as Array<{ shaderBindings?: Record<string, string> }>) {
           if (cmd.shaderBindings) {
-            for (const id of Object.values(cmd.shaderBindings)) addIfValid(id);
+            for (const id of Object.values(cmd.shaderBindings)) addBinding(id);
           }
         }
       }
-      // fieldSelectors can override shaderBindings with ValueSource trees; collect all resource leaves
       if (s.fieldSelectors) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         for (const vs of Object.values(s.fieldSelectors as Record<string, any>)) {
-          for (const id of collectValueSourceResourceIds(vs)) addIfValid(id);
+          for (const id of collectValueSourceResourceIds(vs)) addBinding(id);
         }
       }
       if (s.thenSteps) walkSteps(s.thenSteps as string[]);
@@ -94,7 +106,7 @@ function collectPassResourceIds(
   }
   walkSteps([...(pass.steps ?? []), ...(pass.disabledSteps ?? [])]);
 
-  return out;
+  return { colorIds, depthIds, resolveIds, bindingIds };
 }
 
 function mipChainFactor(mips: number): number {
@@ -132,6 +144,8 @@ export interface PassOverview {
   byKind: Record<string, number>;
 }
 
+export type RTPassUsage = "color" | "depth" | "resolve" | "binding";
+
 export interface RTLifetime {
   rtId: string;
   name: string;
@@ -139,6 +153,8 @@ export interface RTLifetime {
   first: number;  // first pass index (inclusive)
   last: number;   // last pass index (inclusive)
   slot: number;   // aliasing slot: RTs in the same slot are non-overlapping and can share memory
+  /** Per-pass-index dominant usage kind within [first, last]. */
+  passUsage: Map<number, RTPassUsage>;
 }
 
 export interface AliasingStats {
@@ -210,14 +226,23 @@ export function computeMemStats(
 
     // Build RT lifetime intervals from full pass+step resource usage
     const lifetimes = new Map<string, [number, number]>(); // rtId → [first, last]
+    const passUsageMaps = new Map<string, Map<number, RTPassUsage>>(); // rtId → passIdx → kind
     for (let i = 0; i < passOrder.length; i++) {
       const pass = pipeline.passes[passOrder[i]];
       if (!pass) continue;
-      const usedIds = collectPassResourceIds(pass, pipeline.steps, validRtIds);
-      for (const rid of usedIds) {
+      const { colorIds, depthIds, resolveIds, bindingIds } = collectPassUsageIds(pass, pipeline.steps, validRtIds);
+      // Priority: color > depth > resolve > binding (an RT written as attachment is never shown as binding)
+      const allIds = new Set([...colorIds, ...depthIds, ...resolveIds, ...bindingIds]);
+      for (const rid of allIds) {
         const cur = lifetimes.get(rid);
         if (!cur) lifetimes.set(rid, [i, i]);
         else lifetimes.set(rid, [Math.min(cur[0], i), Math.max(cur[1], i)]);
+        const kind: RTPassUsage =
+          colorIds.has(rid)   ? "color"   :
+          depthIds.has(rid)   ? "depth"   :
+          resolveIds.has(rid) ? "resolve" : "binding";
+        if (!passUsageMaps.has(rid)) passUsageMaps.set(rid, new Map());
+        passUsageMaps.get(rid)!.set(i, kind);
       }
     }
 
@@ -266,6 +291,7 @@ export function computeMemStats(
       first: rt.first,
       last: rt.last,
       slot: rtSlots.get(rt.rtId) ?? 0,
+      passUsage: passUsageMaps.get(rt.rtId) ?? new Map(),
     }));
 
     const passNames = passOrder.map((pid) => pipeline.passes[pid]?.name ?? pid);

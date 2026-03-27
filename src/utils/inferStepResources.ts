@@ -457,3 +457,117 @@ export function inferPassResources(
 
     return { reads: [...reads], writes: [...writes] };
 }
+
+export interface PassResourcesDetailed {
+    /** Color attachment targets (written as color RT). */
+    colorAttachments: ResourceId[];
+    /** Depth/stencil attachment targets (written as depth RT). */
+    depthAttachments: ResourceId[];
+    /** Resolve pairs: MSAA source → resolved destination. */
+    resolveAttachments: { source: ResourceId; destination: ResourceId; stepName: string }[];
+    /** Resources bound to shaders with read access. */
+    shaderReads: ResourceId[];
+    /** Resources bound to shaders with write access. */
+    shaderWrites: ResourceId[];
+    /** Resources bound to shaders with read_write access. */
+    shaderReadWrites: ResourceId[];
+}
+
+/**
+ * Like inferPassResources but separates attachment usage from shader binding usage.
+ * Attachments come from raster step attachment structs.
+ * Shader bindings come from shaderBindings / fieldSelectors on all step types.
+ */
+export function inferPassResourcesDetailed(
+    pass: Pass,
+    steps: Record<string, Step>,
+): PassResourcesDetailed {
+    const colorAttachments  = new Set<ResourceId>();
+    const depthAttachments  = new Set<ResourceId>();
+    const resolveAttachments: PassResourcesDetailed["resolveAttachments"] = [];
+    const shaderReads       = new Set<ResourceId>();
+    const shaderWrites      = new Set<ResourceId>();
+    const shaderReadWrites  = new Set<ResourceId>();
+
+    const stepIds = [
+        ...pass.steps,
+        ...(pass.disabledSteps ?? []),
+        ...(pass.variants ?? []).flatMap((v) => v.activeSteps),
+    ];
+
+    function walkStep(step: Step) {
+        if (step.type === "raster") {
+            for (const att of step.attachments.colorAttachments) {
+                if (att.target) colorAttachments.add(att.target);
+            }
+            const dep = step.attachments.depthAttachment;
+            if (dep?.target) depthAttachments.add(dep.target);
+            for (const ra of step.attachments.resolveAttachments ?? []) {
+                if (ra.source && ra.destination) {
+                    resolveAttachments.push({ source: ra.source, destination: ra.destination, stepName: step.name });
+                }
+            }
+            // Shader bindings on draw commands
+            for (const cmd of step.commands) {
+                if (cmd.type !== "drawBatch") continue;
+                for (const rid of Object.values(cmd.shaderBindings ?? {})) {
+                    if (rid) shaderReads.add(rid);
+                }
+                if (cmd.materialInputs) {
+                    for (const val of Object.values(cmd.materialInputs)) {
+                        if (typeof val === "string" && val) shaderReads.add(val);
+                    }
+                }
+            }
+        } else if (step.type === "dispatchCompute" || step.type === "dispatchComputeDecals" || step.type === "dispatchRayTracing") {
+            const bindings = step.shaderBindings ?? {};
+            const allSlots = new Set([...Object.keys(bindings), ...Object.keys(step.fieldSelectors ?? {})]);
+            for (const slotName of allSlots) {
+                const selector = step.fieldSelectors?.[slotName];
+                const ids = selector
+                    ? collectValueSourceResourceIds(selector)
+                    : bindings[slotName] ? [bindings[slotName]] : [];
+                const access = step.shaderBindingAccess?.[slotName] ?? "read";
+                for (const id of ids) {
+                    if (!id) continue;
+                    if (access === "read_write") shaderReadWrites.add(id);
+                    else if (access === "write")  shaderWrites.add(id);
+                    else                          shaderReads.add(id);
+                }
+            }
+        } else if (step.type === "ifBlock") {
+            for (const sid of [...step.thenSteps, ...step.elseSteps]) {
+                const child = steps[sid];
+                if (child) walkStep(child);
+            }
+        } else if (step.type === "enableIf") {
+            for (const sid of step.thenSteps) {
+                const child = steps[sid];
+                if (child) walkStep(child);
+            }
+        }
+        // Fallback: importer-stored reads/writes cover anything not captured by structured data above.
+        // Only apply to non-raster steps — raster attachments are already handled structurally.
+        if (step.type !== "raster") {
+            for (const id of step.reads  ?? []) shaderReads.add(id);
+            for (const id of step.writes ?? []) shaderWrites.add(id);
+        } else {
+            // For raster steps, reads = shader input RTs (not covered by cmd.shaderBindings)
+            for (const id of step.reads ?? []) shaderReads.add(id);
+        }
+    }
+
+    for (const stepId of stepIds) {
+        const step = steps[stepId];
+        if (step) walkStep(step);
+    }
+
+    return {
+        colorAttachments:  [...colorAttachments],
+        depthAttachments:  [...depthAttachments],
+        resolveAttachments,
+        shaderReads:       [...shaderReads],
+        shaderWrites:      [...shaderWrites],
+        shaderReadWrites:  [...shaderReadWrites],
+    };
+}

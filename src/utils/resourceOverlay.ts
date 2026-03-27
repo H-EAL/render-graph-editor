@@ -1,7 +1,7 @@
 import type { Pipeline, PassId, ResourceId, Step } from "../types";
 import { inferPassResources } from "./inferStepResources";
 
-export type AccessKind = "read" | "write" | "readwrite";
+export type AccessKind = "read" | "write" | "readwrite" | "color" | "depth" | "resolve" | "colorread" | "depthread";
 
 export function derivePassAccess(
     resourceId: ResourceId,

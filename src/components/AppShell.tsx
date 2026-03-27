@@ -3,6 +3,7 @@ import { useStore } from "../state/store";
 import { examples, type ExampleId } from "../data/seed";
 import { getApiKey, setApiKey } from "../utils/shaderApi";
 import { PipelineTimelineView } from "../features/pipeline/PipelineTimelineView";
+import { PipelineTreeDrawer } from "../features/pipeline/PipelineTreeDrawer";
 import { PassInspector } from "../features/pass/PassInspector";
 import { StepInspector } from "../features/step/StepInspector";
 import { ResourceDrawer } from "../features/resources/ResourceDrawer";
@@ -462,6 +463,7 @@ export function AppShell() {
     const [showSearch, setShowSearch] = useState(false);
     const [showInputEditor, setShowInputEditor] = useState(false);
     const [rightCollapsed, setRightCollapsed] = useState(false);
+    const [leftCollapsed, setLeftCollapsed] = useState(false);
     const [activeExample, setActiveExample] = useState<ExampleId>("rg");
 
     // Global Ctrl+K / Cmd+K shortcut
@@ -489,6 +491,7 @@ export function AppShell() {
     );
 
     const rightPanel = useResizeW(360, 220, 640, "left");
+    const leftPanel  = useResizeW(240, 160, 480, "right");
 
     return (
         <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
@@ -502,9 +505,34 @@ export function AppShell() {
                 onOpenInputs={() => setShowInputEditor(true)}
             />
 
-            {/* Main area: timeline (left) + right panel */}
+            {/* Main area: tree drawer + timeline + right panel */}
             <div className="flex flex-1 overflow-hidden min-h-0">
-                {/* Left: timeline, fills all available space */}
+                {/* Left tree drawer (collapsible) */}
+                {!leftCollapsed && (
+                    <>
+                        <div
+                            style={{ width: leftPanel.width }}
+                            className="flex flex-col shrink-0 overflow-hidden border-r border-zinc-700/60"
+                        >
+                            <PipelineTreeDrawer />
+                        </div>
+                        <div
+                            onMouseDown={leftPanel.onMouseDown}
+                            className="w-1 bg-zinc-800 hover:bg-blue-600/50 cursor-col-resize shrink-0 transition-colors"
+                        />
+                    </>
+                )}
+
+                {/* Collapse / expand tab for left panel */}
+                <button
+                    onClick={() => setLeftCollapsed((v) => !v)}
+                    title={leftCollapsed ? "Expand tree" : "Collapse tree"}
+                    className="w-4 shrink-0 bg-zinc-900 border-r border-zinc-800 hover:bg-zinc-800 text-zinc-600 hover:text-zinc-300 transition-colors flex items-center justify-center text-[9px]"
+                >
+                    {leftCollapsed ? "▶" : "◀"}
+                </button>
+
+                {/* Center: timeline, fills all available space */}
                 <div className="flex-1 overflow-hidden min-w-0">
                     <PipelineTimelineView />
                 </div>

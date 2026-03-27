@@ -242,6 +242,11 @@ export interface AppState {
     resourceOrder: ResourceId[];
     /** Resources hidden from the timeline overlay (still exist in the library) */
     hiddenResourceIds: ResourceId[];
+    /** Condition name → explicit boolean override (absent = use InputParameter default) */
+    conditionOverrides: Record<string, boolean>;
+
+    setConditionOverride: (name: string, val: boolean | undefined) => void;
+    clearConditionOverrides: () => void;
 
     // ── Timeline actions ──────────────────────────────────────────────────────
     addTimeline: (type?: TimelineType) => void;
@@ -402,6 +407,17 @@ export const useStore = create<AppState>()(
         selectedResourceId: null,
         resourceOrder: resourceOrderFromLibrary(rgDocument.resources),
         hiddenResourceIds: [],
+        conditionOverrides: {},
+
+        setConditionOverride: (name, val) =>
+            set((s) => {
+                const next = { ...s.conditionOverrides };
+                if (val === undefined) delete next[name];
+                else next[name] = val;
+                return { conditionOverrides: next };
+            }),
+
+        clearConditionOverrides: () => set({ conditionOverrides: {} }),
 
         // ── Timelines ─────────────────────────────────────────────────────────
         addTimeline: (type = "graphics") =>
@@ -1834,6 +1850,7 @@ export const useStore = create<AppState>()(
                     selectedCommandId: null,
                     selectedResourceId: null,
                     resourceOrder: resourceOrderFromLibrary(resources),
+                    conditionOverrides: {},
                 });
                 void get().resolveShaderNames();
             } catch (e) {

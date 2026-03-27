@@ -6,7 +6,7 @@ import { Textarea } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { FieldRow, InspectorSection } from "../../components/ui/Panel";
 import { deriveDependencies, getPassDependencies } from "../../utils/dependencyGraph";
-import { inferPassResources, buildResourceOrigins } from "../../utils/inferStepResources";
+import { inferPassResourcesDetailed, buildResourceOrigins } from "../../utils/inferStepResources";
 import type { Pass, PassId, Step, VariantId } from "../../types";
 
 // ─── Dependency display ───────────────────────────────────────────────────────
@@ -94,26 +94,13 @@ export function PassInspector() {
     );
 
     const derivedResources = useMemo(() => {
-        if (!pass) return { reads: [] as string[], writes: [] as string[] };
-        return inferPassResources(pass, pipeline.steps as Record<string, Step>);
+        if (!pass) return null;
+        return inferPassResourcesDetailed(pass, pipeline.steps as Record<string, Step>);
     }, [pass, pipeline.steps]);
 
     const resourceOrigins = useMemo(() => {
         if (!pass) return new Map<string, string[]>();
         return buildResourceOrigins(pass, pipeline.steps as Record<string, Step>);
-    }, [pass, pipeline.steps]);
-
-    const resolvesPairs = useMemo(() => {
-        if (!pass) return [] as { source: string; destination: string; stepName: string }[];
-        const pairs: { source: string; destination: string; stepName: string }[] = [];
-        for (const sid of pass.steps) {
-            const step = pipeline.steps[sid];
-            if (step?.type !== "raster") continue;
-            for (const ra of step.attachments.resolveAttachments ?? []) {
-                pairs.push({ source: ra.source, destination: ra.destination, stepName: step.name });
-            }
-        }
-        return pairs;
     }, [pass, pipeline.steps]);
 
     if (!pass) {
@@ -271,61 +258,102 @@ export function PassInspector() {
 
             {/* ── Resources ── */}
             <InspectorSection title="Resources">
-                {derivedResources.reads.length === 0 && derivedResources.writes.length === 0 ? (
+                {!derivedResources || (
+                    derivedResources.colorAttachments.length === 0 &&
+                    derivedResources.depthAttachments.length === 0 &&
+                    derivedResources.resolveAttachments.length === 0 &&
+                    derivedResources.shaderReads.length === 0 &&
+                    derivedResources.shaderWrites.length === 0 &&
+                    derivedResources.shaderReadWrites.length === 0
+                ) ? (
                     <div className="px-3 py-2 text-[10px] text-zinc-600 italic">
                         No resources inferred from steps yet.
                     </div>
-                ) : (
+                ) : derivedResources && (
                     <div className="px-3 py-2 flex flex-col gap-2">
-                        {derivedResources.reads.length > 0 && (
+                        {/* ── Attachments ── */}
+                        {derivedResources.colorAttachments.length > 0 && (
                             <div className="flex flex-col gap-1">
-                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Reads</span>
+                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Color</span>
                                 <div className="flex flex-wrap gap-1">
-                                    {derivedResources.reads.map((rid) => (
-                                        <span
-                                            key={rid}
-                                            title={resourceOrigins.get(rid)?.join("\n")}
+                                    {derivedResources.colorAttachments.map((rid: string) => (
+                                        <span key={rid} title={resourceOrigins.get(rid)?.join("\n")}
                                             onClick={() => selectResource(rid)}
-                                            className="text-[10px] font-mono bg-blue-900/30 text-blue-300 border border-blue-700/40 rounded px-1.5 py-0.5 cursor-pointer hover:bg-blue-800/50 hover:border-blue-600/60 transition-colors"
-                                        >
+                                            className="text-[10px] font-mono bg-amber-900/30 text-amber-300 border border-amber-700/40 rounded px-1.5 py-0.5 cursor-pointer hover:bg-amber-800/50 transition-colors">
                                             {resName(rid)}
                                         </span>
                                     ))}
                                 </div>
                             </div>
                         )}
-                        {derivedResources.writes.length > 0 && (
+                        {derivedResources.depthAttachments.length > 0 && (
                             <div className="flex flex-col gap-1">
-                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Writes</span>
+                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Depth</span>
                                 <div className="flex flex-wrap gap-1">
-                                    {derivedResources.writes.map((rid) => (
-                                        <span
-                                            key={rid}
-                                            title={resourceOrigins.get(rid)?.join("\n")}
+                                    {derivedResources.depthAttachments.map((rid: string) => (
+                                        <span key={rid} title={resourceOrigins.get(rid)?.join("\n")}
                                             onClick={() => selectResource(rid)}
-                                            className="text-[10px] font-mono bg-amber-900/30 text-amber-300 border border-amber-700/40 rounded px-1.5 py-0.5 cursor-pointer hover:bg-amber-800/50 hover:border-amber-600/60 transition-colors"
-                                        >
+                                            className="text-[10px] font-mono bg-red-900/30 text-red-300 border border-red-700/40 rounded px-1.5 py-0.5 cursor-pointer hover:bg-red-800/50 transition-colors">
                                             {resName(rid)}
                                         </span>
                                     ))}
                                 </div>
                             </div>
                         )}
-                        {resolvesPairs.length > 0 && (
+                        {derivedResources.resolveAttachments.length > 0 && (
                             <div className="flex flex-col gap-1">
-                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Resolves</span>
+                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Resolve</span>
                                 <div className="flex flex-col gap-0.5">
-                                    {resolvesPairs.map((rp, i) => {
-                                        const srcName = resources.renderTargets.find((r) => r.id === rp.source)?.name ?? rp.source;
-                                        const dstName = resources.renderTargets.find((r) => r.id === rp.destination)?.name ?? rp.destination;
-                                        return (
-                                            <div key={i} className="flex items-center gap-1" title={rp.stepName}>
-                                                <span className="text-[10px] font-mono bg-blue-900/30 text-blue-300 border border-blue-700/40 rounded px-1.5 py-0.5">{srcName}</span>
-                                                <span className="text-zinc-500 text-[10px]">→</span>
-                                                <span className="text-[10px] font-mono bg-amber-900/30 text-amber-300 border border-amber-700/40 rounded px-1.5 py-0.5">{dstName}</span>
-                                            </div>
-                                        );
-                                    })}
+                                    {derivedResources.resolveAttachments.map((rp, i: number) => (
+                                        <div key={i} className="flex items-center gap-1" title={rp.stepName}>
+                                            <span className="text-[10px] font-mono bg-amber-900/30 text-amber-300 border border-amber-700/40 rounded px-1.5 py-0.5">{resName(rp.source)}</span>
+                                            <span className="text-zinc-500 text-[10px]">→</span>
+                                            <span className="text-[10px] font-mono bg-violet-900/30 text-violet-300 border border-violet-700/40 rounded px-1.5 py-0.5">{resName(rp.destination)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {/* ── Shader bindings ── */}
+                        {derivedResources.shaderReads.length > 0 && (
+                            <div className="flex flex-col gap-1">
+                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Shader R</span>
+                                <div className="flex flex-wrap gap-1">
+                                    {derivedResources.shaderReads.map((rid: string) => (
+                                        <span key={rid} title={resourceOrigins.get(rid)?.join("\n")}
+                                            onClick={() => selectResource(rid)}
+                                            className="text-[10px] font-mono bg-blue-900/30 text-blue-300 border border-blue-700/40 rounded px-1.5 py-0.5 cursor-pointer hover:bg-blue-800/50 transition-colors">
+                                            {resName(rid)}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {derivedResources.shaderWrites.length > 0 && (
+                            <div className="flex flex-col gap-1">
+                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Shader W</span>
+                                <div className="flex flex-wrap gap-1">
+                                    {derivedResources.shaderWrites.map((rid: string) => (
+                                        <span key={rid} title={resourceOrigins.get(rid)?.join("\n")}
+                                            onClick={() => selectResource(rid)}
+                                            className="text-[10px] font-mono bg-teal-900/30 text-teal-300 border border-teal-700/40 rounded px-1.5 py-0.5 cursor-pointer hover:bg-teal-800/50 transition-colors">
+                                            {resName(rid)}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {derivedResources.shaderReadWrites.length > 0 && (
+                            <div className="flex flex-col gap-1">
+                                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Shader R/W</span>
+                                <div className="flex flex-wrap gap-1">
+                                    {derivedResources.shaderReadWrites.map((rid: string) => (
+                                        <span key={rid} title={resourceOrigins.get(rid)?.join("\n")}
+                                            onClick={() => selectResource(rid)}
+                                            className="text-[10px] font-mono bg-purple-900/30 text-purple-300 border border-purple-700/40 rounded px-1.5 py-0.5 cursor-pointer hover:bg-purple-800/50 transition-colors">
+                                            {resName(rid)}
+                                        </span>
+                                    ))}
                                 </div>
                             </div>
                         )}

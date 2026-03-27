@@ -23,7 +23,7 @@ import {
     type DependencyEdge,
 } from "../../utils/dependencyGraph";
 import { type AccessKind } from "../../utils/resourceOverlay";
-import { inferPassResources, collectStepInputParamRefs } from "../../utils/inferStepResources";
+import { inferPassResources, inferPassResourcesDetailed, collectStepInputParamRefs } from "../../utils/inferStepResources";
 import { newId } from "../../utils/id";
 import { fmtRTSize } from "../resources/ResourceDrawer";
 import type { PassId, Pipeline, ResourceId, Step, TimelineId, TimelineType } from "../../types";
@@ -402,6 +402,9 @@ export function PipelineTimelineView() {
         toggleResourceVisibility,
         hideOthers,
         showAllResources,
+        conditionOverrides,
+        setConditionOverride,
+        clearConditionOverrides,
     } = useStore();
 
     // Multi-select for resource rows (local — drives pass highlighting)
@@ -434,15 +437,7 @@ export function PipelineTimelineView() {
     const [mergeModal, setMergeModal] = useState<{ passAId: PassId; passBId: PassId } | null>(null);
     const [mergeModalName, setMergeModalName] = useState("");
     const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
-    // Controller panel: condition name → explicit boolean (undefined = unset/both)
-    const [controllerValues, setControllerValues] = useState<Map<string, boolean>>(new Map());
     const [showControllers, setShowControllers] = useState(false);
-    const setController = (name: string, val: boolean | undefined) =>
-        setControllerValues((prev) => {
-            const next = new Map(prev);
-            if (val === undefined) next.delete(name); else next.set(name, val);
-            return next;
-        });
     // ── Merge mode ─────────────────────────────────────────────────────────
     const [mergeMode, setMergeMode] = useState(false);
     const [mergeSelection, setMergeSelection] = useState<Set<PassId>>(new Set());
@@ -696,7 +691,7 @@ export function PipelineTimelineView() {
         [resources],
     );
 
-    // Evaluate a pass's conditions against controllerValues.
+    // Evaluate a pass's conditions against conditionOverrides.
     // Returns "active" if all defined conditions are true, "fallback" if any is false, null if any is unset.
     const getPassMode = useCallback((conditions: string[]): "active" | "fallback" | null => {
         if (conditions.length === 0) return null;
@@ -704,12 +699,12 @@ export function PipelineTimelineView() {
         for (const c of conditions) {
             const neg = c.startsWith("!");
             const name = neg ? c.slice(1) : c;
-            const val = controllerValues.get(name);
+            const val = conditionOverrides[name];
             if (val === undefined) { allDefined = false; continue; }
             if ((neg ? !val : val) === false) return "fallback";
         }
         return allDefined ? "active" : null;
-    }, [controllerValues]);
+    }, [conditionOverrides]);
 
     // Per-pass step input-param refs (condition names + data binding refs from ifBlock/enableIf/fieldSelectors)
     const passStepInputRefs = useMemo(() => {
@@ -740,18 +735,16 @@ export function PipelineTimelineView() {
 
     // Inferred reads+writes for every pass, respecting controller values.
     const passInferredResources = useMemo(() => {
-        const map = new Map<PassId, { reads: Set<ResourceId>; writes: Set<ResourceId> }>();
+        const map = new Map<PassId, ReturnType<typeof inferPassResourcesDetailed>>();
         for (const pass of Object.values(pipeline.passes)) {
-            const mode = getPassMode(pass.conditions) ?? undefined;
-            const { reads, writes } = inferPassResources(pass, pipeline.steps as Record<string, Step>, mode);
-            map.set(pass.id, { reads: new Set(reads), writes: new Set(writes) });
+            map.set(pass.id, inferPassResourcesDetailed(pass, pipeline.steps as Record<string, Step>));
         }
         return map;
-    }, [pipeline, getPassMode]);
+    }, [pipeline]);
 
-    // Backwards-compat alias used by paramKindMap (reads only)
+    // Alias used by paramKindMap — input params only appear in shader reads
     const passInferredReads = useMemo(
-        () => new Map([...passInferredResources].map(([pid, { reads }]) => [pid, reads])),
+        () => new Map([...passInferredResources].map(([pid, d]) => [pid, new Set(d.shaderReads)])),
         [passInferredResources],
     );
 
@@ -874,13 +867,28 @@ export function PipelineTimelineView() {
                     for (const { passId } of usage?.readers ?? []) map.set(passId, "read");
                     return [rid, map] as const;
                 }
-                // RT / buffer: derive from precomputed per-pass resources (respects fallback toggle)
+                // RT / buffer: derive from precomputed per-pass detailed resources
                 const map = new Map<PassId, AccessKind>();
-                for (const [passId, { reads, writes }] of passInferredResources) {
-                    const r = reads.has(rid), w = writes.has(rid);
-                    if (r && w) map.set(passId, "readwrite");
-                    else if (r) map.set(passId, "read");
-                    else if (w) map.set(passId, "write");
+                for (const [passId, d] of passInferredResources) {
+                    const isColor     = d.colorAttachments.includes(rid);
+                    const isDepth     = d.depthAttachments.includes(rid);
+                    const isResolveDst = d.resolveAttachments.some((ra) => ra.destination === rid);
+                    const isResolveSrc = d.resolveAttachments.some((ra) => ra.source === rid);
+                    const isShaderR   = d.shaderReads.includes(rid);
+                    const isShaderW   = d.shaderWrites.includes(rid);
+                    const isShaderRW  = d.shaderReadWrites.includes(rid);
+                    const isAnyRead   = isResolveSrc || isShaderR || isShaderRW;
+
+                    if      (isColor && isAnyRead) map.set(passId, "colorread");
+                    else if (isDepth && isAnyRead) map.set(passId, "depthread");
+                    else if (isColor)              map.set(passId, "color");
+                    else if (isDepth)              map.set(passId, "depth");
+                    else if (isResolveDst)         map.set(passId, "resolve");
+                    else if (isResolveSrc)              map.set(passId, "read");
+                    else if (isShaderRW)                map.set(passId, "readwrite");
+                    else if (isShaderW && isShaderR)    map.set(passId, "readwrite");
+                    else if (isShaderW)                 map.set(passId, "write");
+                    else if (isShaderR)                 map.set(passId, "read");
                 }
                 return [rid, map] as const;
             }),
@@ -1528,8 +1536,12 @@ export function PipelineTimelineView() {
         if (!selectedPassId) return new Set<ResourceId>();
         const pass = pipeline.passes[selectedPassId];
         if (!pass) return new Set<ResourceId>();
-        const { reads, writes } = inferPassResources(pass, pipeline.steps as Record<string, Step>);
-        const ids = new Set<ResourceId>([...reads, ...writes]);
+        const d = inferPassResourcesDetailed(pass, pipeline.steps as Record<string, Step>);
+        const ids = new Set<ResourceId>([
+            ...d.colorAttachments, ...d.depthAttachments,
+            ...d.resolveAttachments.flatMap((ra) => [ra.source, ra.destination]),
+            ...d.shaderReads, ...d.shaderWrites, ...d.shaderReadWrites,
+        ]);
         // Include input parameters whose name matches a pass condition
         const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
         for (const cond of pass.conditions) {
@@ -1586,12 +1598,14 @@ export function PipelineTimelineView() {
             }
             const paramName = paramIdToName.get(rid);
             for (const pass of Object.values(pipeline.passes)) {
-                const { reads: r, writes: w } = inferPassResources(
-                    pass,
-                    pipeline.steps as Record<string, Step>,
-                );
-                if (w.includes(rid)) writing.add(pass.id);
-                if (r.includes(rid)) reading.add(pass.id);
+                const d = inferPassResourcesDetailed(pass, pipeline.steps as Record<string, Step>);
+                const isWrite = d.colorAttachments.includes(rid) || d.depthAttachments.includes(rid)
+                    || d.resolveAttachments.some((ra) => ra.destination === rid)
+                    || d.shaderWrites.includes(rid) || d.shaderReadWrites.includes(rid);
+                const isRead = d.resolveAttachments.some((ra) => ra.source === rid)
+                    || d.shaderReads.includes(rid) || d.shaderReadWrites.includes(rid);
+                if (isWrite) writing.add(pass.id);
+                if (isRead) reading.add(pass.id);
                 // Also count condition references for input parameters
                 if (paramName && pass.conditions.some((c) => {
                     const name = c.startsWith("!") ? c.slice(1) : c;
@@ -1633,7 +1647,7 @@ export function PipelineTimelineView() {
                         className={`text-[10px] px-2 py-0.5 rounded border transition-colors font-mono flex items-center gap-1
                             ${showControllers ? "border-amber-600/60 bg-amber-950/40 text-amber-300" : "border-zinc-700/50 text-zinc-600 hover:text-zinc-400"}`}
                     >
-                        {controllerValues.size > 0 && (
+                        {Object.keys(conditionOverrides).length > 0 && (
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
                         )}
                         controllers
@@ -1671,7 +1685,7 @@ export function PipelineTimelineView() {
                 <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800/70 bg-zinc-900/60 shrink-0 flex-wrap">
                     <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0">Conditions</span>
                     {controllers.map((p) => {
-                        const val = controllerValues.get(p.name);
+                        const val = conditionOverrides[p.name];
                         // Cycle: unset → true → false → unset
                         const next = val === undefined ? true : val === true ? false : undefined;
                         const cls = val === true
@@ -1683,7 +1697,7 @@ export function PipelineTimelineView() {
                         return (
                             <button
                                 key={p.id}
-                                onClick={() => setController(p.name, next)}
+                                onClick={() => setConditionOverride(p.name, next)}
                                 title={val === undefined ? "Unset — click to set true" : val ? "True — click to set false" : "False — click to unset"}
                                 className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors shrink-0 ${cls}`}
                             >
@@ -1691,9 +1705,9 @@ export function PipelineTimelineView() {
                             </button>
                         );
                     })}
-                    {controllerValues.size > 0 && (
+                    {Object.keys(conditionOverrides).length > 0 && (
                         <button
-                            onClick={() => setControllerValues(new Map())}
+                            onClick={() => clearConditionOverrides()}
                             className="text-[10px] text-zinc-600 hover:text-zinc-300 font-mono ml-1"
                         >reset all</button>
                     )}
@@ -2232,7 +2246,7 @@ export function PipelineTimelineView() {
                                                 {pass.conditions.slice(0, 2).map((c) => {
                                                     const neg = c.startsWith("!");
                                                     const name = neg ? c.slice(1) : c;
-                                                    const val = controllerValues.get(name);
+                                                    const val = conditionOverrides[name];
                                                     const effective = val === undefined ? undefined : (neg ? !val : val);
                                                     const cls = effective === true
                                                         ? "bg-green-950/80 text-green-400 border-green-800/60"
@@ -2792,37 +2806,43 @@ export function PipelineTimelineView() {
                                             const isRW = access === "readwrite";
                                             // For input params, override label/style with condition/data kind
                                             const paramKind = paramKindMap.get(rid)?.get(passId);
+                                            const isSplitAttachRead = access === "colorread" || access === "depthread";
                                             const badgeCls = paramKind
                                                 ? paramKind === "condition"
                                                     ? "bg-violet-900/60 text-violet-300 border-violet-700/50 hover:bg-violet-800/70"
                                                     : paramKind === "data"
                                                       ? "bg-sky-900/70 text-sky-300 border-sky-700/60 hover:bg-sky-800/80"
                                                       : "bg-violet-900/60 text-violet-300 border-violet-700/50 hover:bg-violet-800/70"
-                                                : access === "read"
-                                                  ? "bg-sky-900/70 text-sky-300 border-sky-700/60 hover:bg-sky-800/80"
-                                                  : access === "write"
-                                                    ? "bg-amber-900/70 text-amber-300 border-amber-700/60 hover:bg-amber-800/80"
-                                                    : "border-sky-700/60 hover:opacity-90";
+                                                : access === "color"     ? "bg-orange-900/70 text-orange-300 border-orange-700/60 hover:bg-orange-800/80"
+                                                : access === "depth"     ? "bg-rose-900/70 text-rose-300 border-rose-700/60 hover:bg-rose-800/80"
+                                                : access === "resolve"   ? "bg-teal-900/70 text-teal-300 border-teal-700/60 hover:bg-teal-800/80"
+                                                : access === "read"      ? "bg-sky-900/70 text-sky-300 border-sky-700/60 hover:bg-sky-800/80"
+                                                : access === "write"     ? "bg-amber-900/70 text-amber-300 border-amber-700/60 hover:bg-amber-800/80"
+                                                : isSplitAttachRead      ? "border-orange-700/60 hover:opacity-90"
+                                                : "border-sky-700/60 hover:opacity-90";
                                             const label = paramKind
-                                                ? paramKind === "condition"
-                                                    ? "cond"
-                                                    : paramKind === "data"
-                                                      ? "data"
-                                                      : "C+D"
-                                                : isRW
-                                                  ? "RW"
-                                                  : access === "read"
-                                                    ? "R"
-                                                    : "W";
+                                                ? paramKind === "condition" ? "cond"
+                                                    : paramKind === "data"  ? "data"
+                                                    : "C+D"
+                                                : access === "color"      ? "CA"
+                                                : access === "depth"      ? "DA"
+                                                : access === "resolve"    ? "RS"
+                                                : access === "colorread"  ? "CA"   // split rendering below
+                                                : access === "depthread"  ? "DA"   // split rendering below
+                                                : isRW                    ? "RW"
+                                                : access === "read"       ? "R"
+                                                : "W";
                                             const tooltipAction = paramKind
-                                                ? paramKind === "condition"
-                                                    ? "used as condition"
-                                                    : paramKind === "data"
-                                                      ? "used as shader data"
-                                                      : "used as condition & shader data"
-                                                : access === "readwrite"
-                                                  ? "reads & writes"
-                                                  : `${access}s`;
+                                                ? paramKind === "condition" ? "used as condition"
+                                                    : paramKind === "data"  ? "used as shader data"
+                                                    : "used as condition & shader data"
+                                                : access === "color"      ? "color attachment"
+                                                : access === "depth"      ? "depth attachment"
+                                                : access === "resolve"    ? "resolve destination"
+                                                : access === "colorread"  ? "color attachment & shader read"
+                                                : access === "depthread"  ? "depth attachment & shader read"
+                                                : access === "readwrite"  ? "reads & writes"
+                                                : `${access}s`;
                                             const rowY = rowIdx * OVERLAY_H;
                                             return (
                                                 <div
@@ -2849,21 +2869,23 @@ export function PipelineTimelineView() {
                                                 >
                                                     {paramKind === "both" ? (
                                                         <>
-                                                            <span className="flex-1 flex items-center justify-center h-full bg-violet-900/60 text-violet-300 text-[8px]">
-                                                                C
-                                                            </span>
-                                                            <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 text-[8px]">
-                                                                D
-                                                            </span>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-violet-900/60 text-violet-300 text-[8px]">C</span>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 text-[8px]">D</span>
                                                         </>
                                                     ) : isRW ? (
                                                         <>
-                                                            <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 hover:bg-sky-800/80">
-                                                                R
-                                                            </span>
-                                                            <span className="flex-1 flex items-center justify-center h-full bg-amber-900/70 text-amber-300 hover:bg-amber-800/80">
-                                                                W
-                                                            </span>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 hover:bg-sky-800/80">R</span>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-amber-900/70 text-amber-300 hover:bg-amber-800/80">W</span>
+                                                        </>
+                                                    ) : access === "colorread" ? (
+                                                        <>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-orange-900/70 text-orange-300 text-[8px]">CA</span>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 text-[8px]">R</span>
+                                                        </>
+                                                    ) : access === "depthread" ? (
+                                                        <>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-rose-900/70 text-rose-300 text-[8px]">DA</span>
+                                                            <span className="flex-1 flex items-center justify-center h-full bg-sky-900/70 text-sky-300 text-[8px]">R</span>
                                                         </>
                                                     ) : (
                                                         label

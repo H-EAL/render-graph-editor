@@ -861,6 +861,16 @@ export function importRgJson(raw: unknown): PipelineDocument {
 
             // Collect resource references
             const passReads = new Set<string>(resolveSources);
+            // Shader input RTs from each node in the render pass
+            for (const ni of (rp.nodeIndices ?? []) as number[]) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const node: any = nodeByIndex.get(ni);
+                if (!node) continue;
+                for (const rtIdx of (node.inputRenderTargetIndices ?? []) as number[]) {
+                    const rid = rtById.get(rtIdx);
+                    if (rid) passReads.add(rid);
+                }
+            }
             const passWrites = new Set<string>(
                 [
                     ...colorAttachments.map((ca) => ca.target),

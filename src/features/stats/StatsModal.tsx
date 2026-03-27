@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useStore } from '../../state/store';
-import { computeMemStats, formatBytes, VIEWPORT_PRESETS, type RTMemStat, type BufMemStat, type AliasingStats } from '../../utils/memoryStats';
+import { computeMemStats, formatBytes, VIEWPORT_PRESETS, type RTMemStat, type BufMemStat, type AliasingStats, type RTPassUsage } from '../../utils/memoryStats';
 
 // ─── Mini section header ──────────────────────────────────────────────────────
 
@@ -94,6 +94,26 @@ const SLOT_COLORS = [
   '#fb923c', '#06b6d4', '#e879f9', '#34d399',
 ];
 
+// Usage kind → opacity (color attachment = full, depth = full but different tint,
+// resolve = medium, binding = dim)
+function usageOpacity(kind: RTPassUsage | undefined, dimmed: boolean): number {
+  if (dimmed) return 0.12;
+  switch (kind) {
+    case 'color':   return 0.85;
+    case 'depth':   return 0.70;
+    case 'resolve': return 0.45;
+    case 'binding': return 0.22;
+    default:        return 0.22;
+  }
+}
+
+// Depth slots get a slight desaturation tint via a white overlay
+function usageOverlay(kind: RTPassUsage | undefined): string | undefined {
+  if (kind === 'depth')   return 'rgba(255,255,255,0.18)';
+  if (kind === 'resolve') return 'rgba(255,255,255,0.08)';
+  return undefined;
+}
+
 const LABEL_W = 130;
 const ROW_H = 18;
 const SPARK_H = 48;
@@ -180,15 +200,28 @@ function AliasingChart({ aliasing }: { aliasing: AliasingStats; rtTotalBytes?: n
                   {rt.name}
                 </span>
                 <div className="relative" style={{ width: chartW, height: ROW_H }}>
-                  <div
-                    className="absolute top-0.5 bottom-0.5 rounded-sm"
-                    style={{
-                      left: barLeft, width: barW, background: color,
-                      opacity: dimmed ? 0.3 : 0.8,
-                      boxShadow: isPeak ? `0 0 0 1.5px ${color}` : undefined,
-                    }}
-                    title={`${rt.name} · passes ${rt.first}–${rt.last} · ${formatBytes(rt.bytes)}`}
-                  />
+                  {Array.from({ length: rt.last - rt.first + 1 }, (_, j) => {
+                    const passIdx = rt.first + j;
+                    const kind = rt.passUsage.get(passIdx);
+                    const opacity = usageOpacity(kind, dimmed);
+                    const overlay = usageOverlay(kind);
+                    return (
+                      <div
+                        key={j}
+                        className="absolute top-0.5 bottom-0.5"
+                        style={{
+                          left: passIdx * colW,
+                          width: colW - 1,
+                          background: color,
+                          opacity,
+                          borderRadius: j === 0 ? '2px 0 0 2px' : j === rt.last - rt.first ? '0 2px 2px 0' : undefined,
+                          boxShadow: isPeak && j === 0 ? `0 0 0 1.5px ${color}` : undefined,
+                          outline: overlay ? `1px solid ${overlay}` : undefined,
+                        }}
+                        title={`${rt.name} · pass ${passIdx} · ${kind ?? 'binding'} · ${formatBytes(rt.bytes)}`}
+                      />
+                    );
+                  })}
                 </div>
                 <div
                   className="shrink-0 flex flex-col items-end justify-center px-1.5 font-mono"
@@ -272,9 +305,23 @@ function AliasingSection({ aliasing, rtTotalBytes }: { aliasing: AliasingStats; 
         </div>
       </div>
       <AliasingChart aliasing={aliasing} rtTotalBytes={rtTotalBytes} />
-      <p className="text-[11px] text-zinc-700 italic mt-1.5">
-        Each row is a render target; bar = lifetime across passes; same color = can share GPU memory (non-overlapping). Sparkline = simultaneously-resident RT bytes.
-      </p>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 mt-1.5">
+        {([
+          ['color attachment',   0.85, undefined],
+          ['depth attachment',   0.70, 'rgba(255,255,255,0.18)'],
+          ['resolve',            0.45, undefined],
+          ['shader binding',     0.22, undefined],
+        ] as [string, number, string | undefined][]).map(([label, op, ov]) => (
+          <span key={label} className="flex items-center gap-1 text-[11px] text-zinc-600">
+            <span
+              className="inline-block w-8 h-2 rounded-sm"
+              style={{ background: '#3b82f6', opacity: op, outline: ov ? `1px solid ${ov}` : undefined }}
+            />
+            {label}
+          </span>
+        ))}
+        <span className="text-[11px] text-zinc-700 italic">· same color = can alias</span>
+      </div>
     </div>
   );
 }
