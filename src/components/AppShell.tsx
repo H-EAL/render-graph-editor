@@ -13,6 +13,7 @@ import { GlobalSearch } from "./GlobalSearch";
 import { validateDocument } from "../validation";
 import { StatsModal } from "../features/stats/StatsModal";
 import { InputEditorPanel } from "../features/inputs/InputEditorPanel";
+import { PipelineGraphModal } from "../features/pipeline/PipelineGraphModal";
 import { computeMemStats, formatBytes } from "../utils/memoryStats";
 
 // ─── Resize hooks ─────────────────────────────────────────────────────────────
@@ -139,6 +140,7 @@ function PipelineHeader({
     onSelectExample,
     onOpenSearch,
     onOpenInputs,
+    onOpenGraph,
 }: {
     onToggleJson: () => void;
     jsonOpen: boolean;
@@ -146,6 +148,7 @@ function PipelineHeader({
     onSelectExample: (id: ExampleId) => void;
     onOpenSearch: () => void;
     onOpenInputs: () => void;
+    onOpenGraph: () => void;
 }) {
     const { pipeline } = useStore();
     const pipelines             = useStore((s) => s.pipelines);
@@ -243,6 +246,14 @@ function PipelineHeader({
                         </button>
                     ))}
                 </div>
+
+                <button
+                    onClick={onOpenGraph}
+                    title="Open pipeline graph view"
+                    className="px-2.5 h-7 text-[11px] text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors"
+                >
+                    Graph
+                </button>
 
                 <button
                     onClick={onOpenSearch}
@@ -536,6 +547,7 @@ export function AppShell() {
     const [showStats, setShowStats] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
     const [showInputEditor, setShowInputEditor] = useState(false);
+    const [showGraph, setShowGraph] = useState(false);
     const [rightCollapsed, setRightCollapsed] = useState(false);
     const [leftCollapsed, setLeftCollapsed] = useState(false);
     const [activeExample, setActiveExample] = useState<ExampleId>("rg");
@@ -577,6 +589,7 @@ export function AppShell() {
                 onSelectExample={handleSelectExample}
                 onOpenSearch={() => setShowSearch(true)}
                 onOpenInputs={() => setShowInputEditor(true)}
+                onOpenGraph={() => setShowGraph(true)}
             />
 
             {/* Main area: tree drawer + timeline + right panel */}
@@ -658,6 +671,9 @@ export function AppShell() {
 
             {/* Global search palette */}
             <GlobalSearch open={showSearch} onClose={() => setShowSearch(false)} />
+
+            {/* Pipeline graph modal */}
+            {showGraph && <PipelineGraphModal onClose={() => setShowGraph(false)} />}
         </div>
     );
 }

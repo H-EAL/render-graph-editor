@@ -1,24 +1,17 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useStore } from "../../state/store";
+import { inferStepResources } from "../../utils/inferStepResources";
 import type {
     Timeline, Pass, Step, RasterStep, RasterCommand,
-    DrawBatchCommand, EnableIfCommand,
-    ResourceId, StepId, ResourceLibrary,
+    EnableIfCommand,
+    ResourceId, StepId,
     IfBlockStep, EnableIfStep,
 } from "../../types";
 
 // ─── Resource state model ─────────────────────────────────────────────────────
 
 type ResState = "color_att" | "depth_att" | "shader_r" | "shader_w" | "shader_rw" | "unknown";
-
-const STATE_LABEL: Record<ResState, string> = {
-    color_att: "CA",
-    depth_att: "DA",
-    shader_r:  "SR",
-    shader_w:  "SW",
-    shader_rw: "SRW",
-    unknown:   "—",
-};
 
 const STATE_COLOR: Record<ResState, string> = {
     color_att: "text-orange-400",
@@ -29,15 +22,89 @@ const STATE_COLOR: Record<ResState, string> = {
     unknown:   "text-zinc-600",
 };
 
+// ─── Barrier types ────────────────────────────────────────────────────────────
+
+type AccessKind = "R" | "W" | "RW";
+
+interface StepBarrierEntry {
+    rid: ResourceId;
+    name: string;
+    prev: AccessKind;
+    next: AccessKind;
+}
+
+/** Recursively collect reads+writes from a step, treating ifBlock/enableIf as transparent. */
+function collectStepAccess(sid: StepId, steps: Record<StepId, Step>): { reads: Set<ResourceId>; writes: Set<ResourceId> } {
+    const step = steps[sid];
+    if (!step) return { reads: new Set(), writes: new Set() };
+
+    if (step.type === "ifBlock") {
+        const ib = step as IfBlockStep;
+        const reads = new Set<ResourceId>(); const writes = new Set<ResourceId>();
+        for (const cid of [...ib.thenSteps, ...ib.elseSteps]) {
+            const { reads: r, writes: w } = collectStepAccess(cid, steps);
+            r.forEach((id) => reads.add(id)); w.forEach((id) => writes.add(id));
+        }
+        return { reads, writes };
+    }
+    if (step.type === "enableIf") {
+        const ei = step as EnableIfStep;
+        const reads = new Set<ResourceId>(); const writes = new Set<ResourceId>();
+        for (const cid of ei.thenSteps) {
+            const { reads: r, writes: w } = collectStepAccess(cid, steps);
+            r.forEach((id) => reads.add(id)); w.forEach((id) => writes.add(id));
+        }
+        return { reads, writes };
+    }
+    const res = inferStepResources(step);
+    return { reads: new Set(res.reads), writes: new Set(res.writes) };
+}
+
+/**
+ * Compute per-step barriers across an entire timeline.
+ * Resource state is tracked sequentially through all passes so that
+ * cross-pass transitions are captured (the common case).
+ */
+function buildTimelineStepBarriers(
+    timeline: { passIds: string[] },
+    passes: Record<string, Pass>,
+    steps: Record<StepId, Step>,
+    nameMap: Map<ResourceId, string>,
+    excludeIds: Set<ResourceId>,
+): Map<StepId, StepBarrierEntry[]> {
+    const result = new Map<StepId, StepBarrierEntry[]>();
+    const globalState = new Map<ResourceId, AccessKind>();
+
+    for (const pid of timeline.passIds) {
+        const pass = passes[pid];
+        if (!pass) continue;
+
+        for (const sid of pass.steps) {
+            const { reads, writes } = collectStepAccess(sid, steps);
+
+            const thisAccess = new Map<ResourceId, AccessKind>();
+            for (const rid of reads)  if (!excludeIds.has(rid)) thisAccess.set(rid, thisAccess.has(rid) ? "RW" : "R");
+            for (const rid of writes) if (!excludeIds.has(rid)) thisAccess.set(rid, thisAccess.get(rid) === "R" ? "RW" : "W");
+
+            const barriers: StepBarrierEntry[] = [];
+            for (const [rid, next] of thisAccess) {
+                const prev = globalState.get(rid);
+                if (prev !== undefined) {
+                    barriers.push({ rid, name: nameMap.get(rid) ?? rid, prev, next });
+                }
+            }
+            result.set(sid, barriers);
+
+            for (const [rid, acc] of thisAccess) globalState.set(rid, acc);
+        }
+    }
+    return result;
+}
+
 // ─── Condition evaluation ─────────────────────────────────────────────────────
 
 type CondMode = "active" | "inactive" | "unknown";
 
-/**
- * Evaluates a single condition string (e.g. "hbao" or "!opaque") against
- * explicit overrides and per-parameter defaults.
- * Returns undefined when the value cannot be determined.
- */
 function evalCondStr(
     c: string,
     overrides: Record<string, boolean>,
@@ -50,10 +117,6 @@ function evalCondStr(
     return neg ? !val : val;
 }
 
-/**
- * Evaluates all conditions in an array (AND semantics).
- * "inactive" if any is false, "active" if all are true, "unknown" otherwise.
- */
 function evalConditions(
     conditions: string[],
     overrides: Record<string, boolean>,
@@ -71,101 +134,17 @@ function evalConditions(
 
 // ─── Tree data types ──────────────────────────────────────────────────────────
 
-interface Transition {
-    rid: ResourceId;
-    name: string;
-    from: ResState;
-    to: ResState;
-}
-
 interface CmdNode {
     cmd: RasterCommand;
     children?: CmdNode[];
 }
 
-interface RasterStepData {
-    /** Barrier transitions needed before the render pass begins */
-    barrier: Transition[];
-    /** Command tree (no per-command barriers) */
-    commands: CmdNode[];
-}
-
-// ─── Barrier computation ──────────────────────────────────────────────────────
-
-function buildResourceNameMap(resources: ResourceLibrary): Map<ResourceId, string> {
-    const m = new Map<ResourceId, string>();
-    for (const rt  of resources.renderTargets) m.set(rt.id,  rt.name);
-    for (const buf of resources.buffers)        m.set(buf.id, buf.name);
-    return m;
-}
-
-function neededState(_cmd: DrawBatchCommand, _slot: string): ResState {
-    return "shader_r";
-}
-
-/** Recursively collect all (rid → first-needed-state) across all commands in a branch. */
-function collectNeeded(
-    cmds: RasterCommand[],
-    nameMap: Map<ResourceId, string>,
-    out: Map<ResourceId, ResState>,
-): void {
-    for (const cmd of cmds) {
-        if (cmd.type === "enableIf") {
-            collectNeeded((cmd as EnableIfCommand).thenCommands, nameMap, out);
-            continue;
-        }
-        if (cmd.type === "drawBatch") {
-            const draw = cmd as DrawBatchCommand;
-            for (const [slot, rid] of Object.entries(draw.shaderBindings ?? {})) {
-                if (rid && nameMap.has(rid) && !out.has(rid))
-                    out.set(rid, neededState(draw, slot));
-            }
-        }
-    }
-}
-
 function buildCmdTree(cmds: RasterCommand[]): CmdNode[] {
     return cmds.map((cmd) => {
-        if (cmd.type === "enableIf") {
+        if (cmd.type === "enableIf")
             return { cmd, children: buildCmdTree((cmd as EnableIfCommand).thenCommands) };
-        }
         return { cmd };
     });
-}
-
-function buildRasterStepData(
-    steps: Record<StepId, Step>,
-    resources: ResourceLibrary,
-): Map<StepId, RasterStepData> {
-    const nameMap = buildResourceNameMap(resources);
-    const result  = new Map<StepId, RasterStepData>();
-
-    for (const step of Object.values(steps)) {
-        if (step.type !== "raster") continue;
-        const rs = step as RasterStep;
-
-        // Seed initial layout from attachments
-        const initialState = new Map<ResourceId, ResState>();
-        for (const ca of rs.attachments.colorAttachments)
-            initialState.set(ca.target, "color_att");
-        if (rs.attachments.depthAttachment)
-            initialState.set(rs.attachments.depthAttachment.target, "depth_att");
-
-        // Collect all shader-bound resources and their first needed state
-        const needed = new Map<ResourceId, ResState>();
-        collectNeeded(rs.commands, nameMap, needed);
-
-        // Transitions = resources where from ≠ to
-        const barrier: Transition[] = [];
-        for (const [rid, toState] of needed) {
-            const fromState = initialState.get(rid) ?? "unknown";
-            if (fromState !== toState)
-                barrier.push({ rid, name: nameMap.get(rid) ?? rid, from: fromState, to: toState });
-        }
-
-        result.set(step.id, { barrier, commands: buildCmdTree(rs.commands) });
-    }
-    return result;
 }
 
 // ─── Style helpers ────────────────────────────────────────────────────────────
@@ -201,12 +180,26 @@ const STEP_TYPE_COLOR: Record<string, string> = {
 };
 
 const TL_TYPE_COLOR: Record<string, string> = {
-    graphics:     "text-sky-500",
-    asyncCompute: "text-violet-500",
-    transfer:     "text-teal-500",
-    raytracing:   "text-pink-500",
-    custom:       "text-zinc-500",
+    graphics:     "text-blue-400",
+    asyncCompute: "text-emerald-400",
+    transfer:     "text-orange-400",
+    raytracing:   "text-violet-400",
+    custom:       "text-zinc-400",
 };
+
+// ─── Barrier chip colour ──────────────────────────────────────────────────────
+
+function barrierChipCls(prev: AccessKind, next: AccessKind): string {
+    const hasWritePrev = prev === "W" || prev === "RW";
+    const hasWriteNext = next === "W" || next === "RW";
+    if (hasWritePrev && !hasWriteNext) // W→R  write-to-read (layout transition)
+        return "border-amber-800/70 bg-amber-950/50 text-amber-400";
+    if (!hasWritePrev && hasWriteNext) // R→W  read-to-write
+        return "border-sky-800/60 bg-sky-950/50 text-sky-400";
+    if (hasWritePrev && hasWriteNext)  // W→W / RW→W  write hazard
+        return "border-red-800/60 bg-red-950/50 text-red-400";
+    return "border-zinc-700/50 bg-zinc-900/50 text-zinc-500"; // R→R
+}
 
 // ─── Shared row primitives ────────────────────────────────────────────────────
 
@@ -228,11 +221,8 @@ function IndentGuide({ depth }: { depth: number }) {
     );
 }
 
-/** Pill showing a single condition string with its evaluated state. */
 function CondPill({
-    c,
-    overrides,
-    defaults,
+    c, overrides, defaults,
 }: {
     c: string;
     overrides: Record<string, boolean>;
@@ -252,34 +242,35 @@ function CondPill({
 
 // ─── Barrier row ──────────────────────────────────────────────────────────────
 
-function BarrierRow({ transitions, depth }: { transitions: Transition[]; depth: number }) {
+interface TooltipInfo {
+    barriers: StepBarrierEntry[];
+    x: number;
+    y: number;
+}
+
+interface CompactBarrierRowProps {
+    barriers: StepBarrierEntry[];
+    depth: number;
+    onEnter: (e: React.MouseEvent, barriers: StepBarrierEntry[]) => void;
+    onLeave: () => void;
+}
+
+function CompactBarrierRow({ barriers, depth, onEnter, onLeave }: CompactBarrierRowProps) {
     return (
-        <div className="flex flex-col select-none">
-            <div className="flex items-stretch min-h-4.5">
-                <IndentGuide depth={depth} />
-                <div className="flex items-center gap-1 px-1 py-0.5 flex-1 border-l-2 border-dashed border-zinc-700/60">
-                    <span className="text-[9px] font-semibold text-zinc-600 uppercase tracking-widest leading-none">
-                        barrier
-                    </span>
-                    {transitions.length === 0 && (
-                        <span className="text-[9px] text-zinc-700 italic">∅</span>
-                    )}
-                </div>
+        <div className="flex items-stretch min-h-4">
+            <IndentGuide depth={depth} />
+            <div
+                className="flex items-center gap-1 px-2 py-0.5 flex-1 border-l-2 border-dashed border-zinc-700/50 cursor-default"
+                onMouseEnter={(e) => onEnter(e, barriers)}
+                onMouseLeave={onLeave}
+            >
+                <span className="text-[7px] font-semibold text-zinc-600 uppercase tracking-widest leading-none select-none">
+                    ↕
+                </span>
+                <span className="text-[9px] text-zinc-600 select-none">
+                    barriers
+                </span>
             </div>
-            {transitions.map((t) => (
-                <div key={t.rid} className="flex items-stretch min-h-4">
-                    <IndentGuide depth={depth} />
-                    <div className="flex items-center gap-1 px-2 py-0.5 flex-1 border-l-2 border-dashed border-zinc-700/60">
-                        <span className="text-[10px] text-zinc-500 font-mono truncate max-w-22.5" title={t.name}>
-                            {t.name}
-                        </span>
-                        <span className="text-zinc-700 text-[9px]">:</span>
-                        <span className={`text-[9px] font-semibold ${STATE_COLOR[t.from]}`}>{STATE_LABEL[t.from]}</span>
-                        <span className="text-zinc-700 text-[9px]">→</span>
-                        <span className={`text-[9px] font-semibold ${STATE_COLOR[t.to]}`}>{STATE_LABEL[t.to]}</span>
-                    </div>
-                </div>
-            ))}
         </div>
     );
 }
@@ -304,6 +295,10 @@ function CmdTypeChip({ type }: { type: RasterCommand["type"] }) {
     );
 }
 
+// ─── Unused import kept for type narrowing ────────────────────────────────────
+// (ResState STATE_COLOR used below in future shader binding display)
+void STATE_COLOR;
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function PipelineTreeDrawer() {
@@ -319,18 +314,17 @@ export function PipelineTreeDrawer() {
         conditionOverrides,
     } = useStore();
 
-    // ── Defaults map: InputParameter.name → parsed bool default ─────────────
+    // ── Condition defaults ───────────────────────────────────────────────────
     const conditionDefaults = useMemo((): Map<string, boolean> => {
         const m = new Map<string, boolean>();
         for (const p of resources.inputParameters) {
-            if (p.type === "bool") {
+            if (p.type === "bool")
                 m.set(p.name, p.defaultValue === "true" || p.defaultValue === "1");
-            }
         }
         return m;
     }, [resources.inputParameters]);
 
-    // ── Hide vs dim inactive nodes ───────────────────────────────────────────
+    // ── Hide vs dim inactive ─────────────────────────────────────────────────
     const [hideInactive, setHideInactive] = useState(true);
 
     // ── Expand state ─────────────────────────────────────────────────────────
@@ -398,16 +392,49 @@ export function PipelineTreeDrawer() {
 
     const collapseAll = useCallback(() => setExpanded(new Set()), []);
 
-    // ── Precomputed raster step data ─────────────────────────────────────────
-    const rasterStepData = useMemo(
-        () => buildRasterStepData(pipeline.steps as Record<StepId, Step>, resources),
-        [pipeline.steps, resources],
-    );
+    // ── Raster command tree ──────────────────────────────────────────────────
+    const rasterCmdMap = useMemo(() => {
+        const m = new Map<StepId, CmdNode[]>();
+        for (const step of Object.values(pipeline.steps)) {
+            if (step.type === "raster")
+                m.set(step.id, buildCmdTree((step as RasterStep).commands));
+        }
+        return m;
+    }, [pipeline.steps]);
+
+    // ── Per-pass barrier maps ────────────────────────────────────────────────
+    const stepBarrierMap = useMemo(() => {
+        const nameMap = new Map<ResourceId, string>();
+        for (const rt  of resources.renderTargets) nameMap.set(rt.id,  rt.name);
+        for (const buf of resources.buffers)        nameMap.set(buf.id, buf.name);
+
+        const inputParamIds = new Set(resources.inputParameters.map((p) => p.id));
+
+        // Merge barriers from all timelines into a single StepId → barriers map
+        const result = new Map<StepId, StepBarrierEntry[]>();
+        for (const tl of pipeline.timelines) {
+            const tlBarriers = buildTimelineStepBarriers(
+                tl,
+                pipeline.passes as Record<string, Pass>,
+                pipeline.steps as Record<StepId, Step>,
+                nameMap,
+                inputParamIds,
+            );
+            for (const [sid, barriers] of tlBarriers) result.set(sid, barriers);
+        }
+        return result;
+    }, [pipeline.timelines, pipeline.passes, pipeline.steps, resources]);
+
+    // ── Barrier chip tooltip (portal, escapes overflow container) ────────────
+    const [barrierTooltip, setBarrierTooltip] = useState<TooltipInfo | null>(null);
+
+    const onBarrierEnter = useCallback((e: React.MouseEvent, barriers: StepBarrierEntry[]) => {
+        setBarrierTooltip({ barriers, x: e.clientX, y: e.clientY });
+    }, []);
+    const onBarrierLeave = useCallback(() => setBarrierTooltip(null), []);
 
     // ── Render helpers ───────────────────────────────────────────────────────
 
-    /** Renders draw/state commands. enableIf wrappers are flattened — their children
-     *  are inlined directly after condition evaluation (no meta-row shown). */
     function renderCmdNodes(nodes: CmdNode[], depth: number, parentInactive = false): React.ReactNode[] {
         return nodes.flatMap<React.ReactNode>((node) => {
             const cmd = node.cmd;
@@ -447,9 +474,9 @@ export function PipelineTreeDrawer() {
         });
     }
 
-    /** Renders steps. ifBlock/enableIf are transparent — their children are inlined
-     *  directly at the same depth after condition evaluation (no meta-row shown). */
-    function renderSteps(stepIds: StepId[], depth: number, parentInactive = false): React.ReactNode[] {
+    function renderSteps(stepIds: StepId[], depth: number, passId: string, parentInactive = false): React.ReactNode[] {
+        const stepBarriers = stepBarrierMap;
+
         return stepIds.flatMap<React.ReactNode>((sid) => {
             const step = pipeline.steps[sid] as Step | undefined;
             if (!step) return [];
@@ -457,34 +484,33 @@ export function PipelineTreeDrawer() {
             const ownInactive = evalConditions(step.conditions, conditionOverrides, conditionDefaults) === "inactive";
             const inactive = parentInactive || ownInactive;
 
-            // ── ifBlock: transparent — inline the appropriate branch ─────────
+            // ── ifBlock: transparent ─────────────────────────────────────────
             if (step.type === "ifBlock") {
                 const ifStep = step as IfBlockStep;
                 const mode = evalConditions([ifStep.condition], conditionOverrides, conditionDefaults);
                 if (mode === "inactive") {
                     if (ifStep.elseSteps.length === 0) return [];
-                    const inner = renderSteps(ifStep.elseSteps, depth, inactive);
+                    const inner = renderSteps(ifStep.elseSteps, depth, passId, inactive);
                     return inactive && !hideInactive ? [<div key={sid} className="opacity-40">{inner}</div>] : inner;
                 }
                 if (mode === "active") {
-                    const inner = renderSteps(ifStep.thenSteps, depth, inactive);
+                    const inner = renderSteps(ifStep.thenSteps, depth, passId, inactive);
                     return inactive && !hideInactive ? [<div key={sid} className="opacity-40">{inner}</div>] : inner;
                 }
-                // unknown — show both branches inlined
                 return [
-                    ...renderSteps(ifStep.thenSteps, depth, inactive),
-                    ...renderSteps(ifStep.elseSteps, depth, inactive),
+                    ...renderSteps(ifStep.thenSteps, depth, passId, inactive),
+                    ...renderSteps(ifStep.elseSteps, depth, passId, inactive),
                 ];
             }
 
-            // ── enableIf: transparent — inline children if condition holds ───
+            // ── enableIf: transparent ────────────────────────────────────────
             if (step.type === "enableIf") {
                 const eiStep = step as EnableIfStep;
                 const mode = evalConditions([eiStep.condition], conditionOverrides, conditionDefaults);
                 const branchInactive = mode === "inactive";
                 if (branchInactive && hideInactive) return [];
                 if (eiStep.thenSteps.length === 0) return [];
-                const inner = renderSteps(eiStep.thenSteps, depth, inactive || branchInactive);
+                const inner = renderSteps(eiStep.thenSteps, depth, passId, inactive || branchInactive);
                 return branchInactive ? [<div key={sid} className="opacity-40">{inner}</div>] : inner;
             }
 
@@ -492,14 +518,28 @@ export function PipelineTreeDrawer() {
 
             const nodeKey = `s:${sid}`;
             const isSelected = selectedStepId === sid;
-            const stepData = rasterStepData.get(sid);
+            const cmdNodes = rasterCmdMap.get(sid);
             const isExpandable = step.type === "raster";
             const isOpen = expanded.has(nodeKey);
             const typeLabel = STEP_TYPE_LABEL[step.type] ?? step.type;
             const typeColor = STEP_TYPE_COLOR[step.type] ?? "text-zinc-400";
 
+            // Barriers for this step (only for top-level pass steps)
+            const barriers = stepBarriers?.get(sid) ?? [];
+
             return [(
                 <div key={sid} className={inactive ? "opacity-40" : ""}>
+                    {/* Barrier row — before this step */}
+                    {barriers.length > 0 && (
+                        <CompactBarrierRow
+                            barriers={barriers}
+                            depth={depth}
+                            onEnter={onBarrierEnter}
+                            onLeave={onBarrierLeave}
+                        />
+                    )}
+
+                    {/* Step row */}
                     <div
                         className={`flex items-stretch min-h-5.5 cursor-pointer group
                             ${isSelected ? "bg-blue-900/30" : "hover:bg-zinc-800/50"}`}
@@ -532,11 +572,10 @@ export function PipelineTreeDrawer() {
                         </div>
                     </div>
 
-                    {isOpen && isExpandable && stepData && (
+                    {/* Raster commands (no barrier inside — barriers are before the step) */}
+                    {isOpen && isExpandable && cmdNodes && (
                         <div>
-                            {/* Single barrier before the raster step's commands */}
-                            <BarrierRow transitions={stepData.barrier} depth={depth + 1} />
-                            {renderCmdNodes(stepData.commands, depth + 1, inactive)}
+                            {renderCmdNodes(cmdNodes, depth + 1, inactive)}
                         </div>
                     )}
                 </div>
@@ -585,7 +624,7 @@ export function PipelineTreeDrawer() {
                     </div>
                 </div>
 
-                {isOpen && hasSteps && renderSteps(pass.steps, depth + 1, inactive)}
+                {isOpen && hasSteps && renderSteps(pass.steps, depth + 1, pass.id, inactive)}
             </div>
         );
     }
@@ -678,6 +717,36 @@ export function PipelineTreeDrawer() {
                     <div className="px-4 py-6 text-[11px] text-zinc-600 italic">No timelines</div>
                 )}
             </div>
+
+            {/* Barrier tooltip — portal so it escapes overflow:hidden */}
+            {barrierTooltip && createPortal(
+                <div
+                    style={{
+                        position: "fixed",
+                        left: barrierTooltip.x + 12,
+                        top: barrierTooltip.y - 8,
+                        zIndex: 9999,
+                        pointerEvents: "none",
+                        transform: "translateY(-100%)",
+                    }}
+                    className="bg-zinc-800 border border-zinc-700 rounded px-2.5 py-1.5 shadow-2xl min-w-40"
+                >
+                    {barrierTooltip.barriers.map((b) => {
+                        const fmtAccess = (a: AccessKind) =>
+                            a === "R" ? "read" : a === "W" ? "write" : "read+write";
+                        const cls = barrierChipCls(b.prev, b.next);
+                        return (
+                            <div key={b.rid} className="flex items-center gap-1.5 py-0.5">
+                                <span className="text-[10px] text-zinc-300 font-medium truncate flex-1">{b.name}</span>
+                                <span className={`text-[9px] font-mono px-1 rounded-sm border leading-3.5 ${cls}`}>
+                                    {fmtAccess(b.prev)}→{fmtAccess(b.next)}
+                                </span>
+                            </div>
+                        );
+                    })}
+                </div>,
+                document.body,
+            )}
         </div>
     );
 }
