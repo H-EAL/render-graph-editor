@@ -99,10 +99,7 @@ function buildResourceNameMap(resources: ResourceLibrary): Map<ResourceId, strin
     return m;
 }
 
-function neededState(cmd: DrawBatchCommand, slot: string): ResState {
-    const access = cmd.shaderBindingAccess?.[slot] ?? "read";
-    if (access === "write")      return "shader_w";
-    if (access === "read_write") return "shader_rw";
+function neededState(_cmd: DrawBatchCommand, _slot: string): ResState {
     return "shader_r";
 }
 
@@ -411,8 +408,8 @@ export function PipelineTreeDrawer() {
 
     /** Renders draw/state commands. enableIf wrappers are flattened — their children
      *  are inlined directly after condition evaluation (no meta-row shown). */
-    function renderCmdNodes(nodes: CmdNode[], depth: number, parentInactive = false): React.ReactNode {
-        return nodes.flatMap((node) => {
+    function renderCmdNodes(nodes: CmdNode[], depth: number, parentInactive = false): React.ReactNode[] {
+        return nodes.flatMap<React.ReactNode>((node) => {
             const cmd = node.cmd;
 
             if (cmd.type === "enableIf") {
@@ -421,7 +418,7 @@ export function PipelineTreeDrawer() {
                 if (branchInactive && hideInactive) return [];
                 if (!node.children) return [];
                 const inner = renderCmdNodes(node.children, depth, parentInactive || branchInactive);
-                return branchInactive ? [<div key={cmd.id} className="opacity-40">{inner}</div>] : [inner];
+                return branchInactive ? [<div key={cmd.id} className="opacity-40">{inner}</div>] : inner;
             }
 
             if (parentInactive && hideInactive) return [];
@@ -452,8 +449,8 @@ export function PipelineTreeDrawer() {
 
     /** Renders steps. ifBlock/enableIf are transparent — their children are inlined
      *  directly at the same depth after condition evaluation (no meta-row shown). */
-    function renderSteps(stepIds: StepId[], depth: number, parentInactive = false): React.ReactNode {
-        return stepIds.flatMap((sid) => {
+    function renderSteps(stepIds: StepId[], depth: number, parentInactive = false): React.ReactNode[] {
+        return stepIds.flatMap<React.ReactNode>((sid) => {
             const step = pipeline.steps[sid] as Step | undefined;
             if (!step) return [];
 
@@ -467,16 +464,16 @@ export function PipelineTreeDrawer() {
                 if (mode === "inactive") {
                     if (ifStep.elseSteps.length === 0) return [];
                     const inner = renderSteps(ifStep.elseSteps, depth, inactive);
-                    return inactive && !hideInactive ? [<div key={sid} className="opacity-40">{inner}</div>] : [inner];
+                    return inactive && !hideInactive ? [<div key={sid} className="opacity-40">{inner}</div>] : inner;
                 }
                 if (mode === "active") {
                     const inner = renderSteps(ifStep.thenSteps, depth, inactive);
-                    return inactive && !hideInactive ? [<div key={sid} className="opacity-40">{inner}</div>] : [inner];
+                    return inactive && !hideInactive ? [<div key={sid} className="opacity-40">{inner}</div>] : inner;
                 }
                 // unknown — show both branches inlined
                 return [
-                    renderSteps(ifStep.thenSteps, depth, inactive),
-                    renderSteps(ifStep.elseSteps, depth, inactive),
+                    ...renderSteps(ifStep.thenSteps, depth, inactive),
+                    ...renderSteps(ifStep.elseSteps, depth, inactive),
                 ];
             }
 
@@ -488,7 +485,7 @@ export function PipelineTreeDrawer() {
                 if (branchInactive && hideInactive) return [];
                 if (eiStep.thenSteps.length === 0) return [];
                 const inner = renderSteps(eiStep.thenSteps, depth, inactive || branchInactive);
-                return branchInactive ? [<div key={sid} className="opacity-40">{inner}</div>] : [inner];
+                return branchInactive ? [<div key={sid} className="opacity-40">{inner}</div>] : inner;
             }
 
             if (inactive && hideInactive) return [];

@@ -23,7 +23,7 @@ import {
     type DependencyEdge,
 } from "../../utils/dependencyGraph";
 import { type AccessKind } from "../../utils/resourceOverlay";
-import { inferPassResources, inferPassResourcesDetailed, collectStepInputParamRefs } from "../../utils/inferStepResources";
+import { inferPassResourcesDetailed, collectStepInputParamRefs } from "../../utils/inferStepResources";
 import { newId } from "../../utils/id";
 import { fmtRTSize } from "../resources/ResourceDrawer";
 import type { PassId, Pipeline, ResourceId, Step, TimelineId, TimelineType } from "../../types";
@@ -690,21 +690,6 @@ export function PipelineTimelineView() {
         () => new Map((resources.materialInterfaces ?? []).map((m) => [m.id, m])),
         [resources],
     );
-
-    // Evaluate a pass's conditions against conditionOverrides.
-    // Returns "active" if all defined conditions are true, "fallback" if any is false, null if any is unset.
-    const getPassMode = useCallback((conditions: string[]): "active" | "fallback" | null => {
-        if (conditions.length === 0) return null;
-        let allDefined = true;
-        for (const c of conditions) {
-            const neg = c.startsWith("!");
-            const name = neg ? c.slice(1) : c;
-            const val = conditionOverrides[name];
-            if (val === undefined) { allDefined = false; continue; }
-            if ((neg ? !val : val) === false) return "fallback";
-        }
-        return allDefined ? "active" : null;
-    }, [conditionOverrides]);
 
     // Per-pass step input-param refs (condition names + data binding refs from ifBlock/enableIf/fieldSelectors)
     const passStepInputRefs = useMemo(() => {

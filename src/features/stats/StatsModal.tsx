@@ -178,8 +178,6 @@ function AliasingChart({ aliasing }: { aliasing: AliasingStats; rtTotalBytes?: n
           {sorted.map((rt, i) => {
             const slotBreak = i > 0 && sorted[i - 1].slot !== rt.slot;
             const color = SLOT_COLORS[rt.slot % SLOT_COLORS.length];
-            const barLeft = rt.first * colW;
-            const barW = (rt.last - rt.first + 1) * colW - 1;
             const dimmed = selectedSlot !== null && rt.slot !== selectedSlot;
             const isPeak = peakRtIds.has(rt.rtId);
             const showSlotLabel = !slotLabelSeen.has(rt.slot);
