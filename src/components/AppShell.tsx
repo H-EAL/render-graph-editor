@@ -14,6 +14,7 @@ import { validateDocument } from "../validation";
 import { StatsModal } from "../features/stats/StatsModal";
 import { InputEditorPanel } from "../features/inputs/InputEditorPanel";
 import { PipelineGraphModal } from "../features/pipeline/PipelineGraphModal";
+import { ExecutionAnalysisModal } from "../features/analysis/ExecutionAnalysisModal";
 import { computeMemStats, formatBytes } from "../utils/memoryStats";
 
 // ─── Resize hooks ─────────────────────────────────────────────────────────────
@@ -141,6 +142,7 @@ function PipelineHeader({
     onOpenSearch,
     onOpenInputs,
     onOpenGraph,
+    onOpenAnalysis,
 }: {
     onToggleJson: () => void;
     jsonOpen: boolean;
@@ -149,6 +151,7 @@ function PipelineHeader({
     onOpenSearch: () => void;
     onOpenInputs: () => void;
     onOpenGraph: () => void;
+    onOpenAnalysis: () => void;
 }) {
     const { pipeline } = useStore();
     const pipelines             = useStore((s) => s.pipelines);
@@ -253,6 +256,14 @@ function PipelineHeader({
                     className="px-2.5 h-7 text-[11px] text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors"
                 >
                     Graph
+                </button>
+
+                <button
+                    onClick={onOpenAnalysis}
+                    title="Open execution analysis"
+                    className="px-2.5 h-7 text-[11px] text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors"
+                >
+                    Analyze
                 </button>
 
                 <button
@@ -548,6 +559,7 @@ export function AppShell() {
     const [showSearch, setShowSearch] = useState(false);
     const [showInputEditor, setShowInputEditor] = useState(false);
     const [showGraph, setShowGraph] = useState(false);
+    const [showAnalysis, setShowAnalysis] = useState(false);
     const [rightCollapsed, setRightCollapsed] = useState(false);
     const [leftCollapsed, setLeftCollapsed] = useState(false);
     const [activeExample, setActiveExample] = useState<ExampleId>("rg");
@@ -590,6 +602,7 @@ export function AppShell() {
                 onOpenSearch={() => setShowSearch(true)}
                 onOpenInputs={() => setShowInputEditor(true)}
                 onOpenGraph={() => setShowGraph(true)}
+                onOpenAnalysis={() => setShowAnalysis(true)}
             />
 
             {/* Main area: tree drawer + timeline + right panel */}
@@ -674,6 +687,9 @@ export function AppShell() {
 
             {/* Pipeline graph modal */}
             {showGraph && <PipelineGraphModal onClose={() => setShowGraph(false)} />}
+
+            {/* Execution analysis modal */}
+            {showAnalysis && <ExecutionAnalysisModal onClose={() => setShowAnalysis(false)} />}
         </div>
     );
 }
