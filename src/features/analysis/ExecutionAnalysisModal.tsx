@@ -578,6 +578,68 @@ function ScheduleTab({
     );
 }
 
+// ─── Compare reordering explanation ──────────────────────────────────────────
+
+import type { ScheduledPass, ScheduleResult } from "../../utils/heuristicScheduler";
+
+function explainReordering(
+    pid: PassId,
+    authPos: number,   // 0-based authored position
+    sugPos:  number,   // 0-based suggested position
+    sp: ScheduledPass,
+    schedule: ScheduleResult,
+    authIdx: Map<PassId, number>,
+): string {
+    const delta = sugPos - authPos;
+    const n = (d: number) => `${d} position${d === 1 ? "" : "s"}`;
+
+    if (delta === 0) {
+        if (sp.candidatePassIds.length === 1)
+            return "Position unchanged — it was the only dependency-ready pass available at this step, so no reordering was possible.";
+        const bd = sp.scoreBreakdown;
+        if (bd.criticalPathCost >= bd.slackBonus && bd.criticalPathCost >= bd.memoryFreedBytes)
+            return "Position unchanged — its critical-path cost kept it at the top of the ready queue, so the authored order was already optimal.";
+        if (bd.slackBonus > 0)
+            return "Position unchanged — it had zero scheduling slack and was the most urgent ready pass, matching its authored slot exactly.";
+        return "Position unchanged — its composite score (critical path, memory, slack) matched its authored slot; no improvement was possible.";
+    }
+
+    if (delta < 0) {
+        const abs = Math.abs(delta);
+        const bd = sp.scoreBreakdown;
+        // Identify dominant factor
+        if (bd.criticalPathCost >= bd.slackBonus && bd.criticalPathCost >= bd.memoryFreedBytes)
+            return `Moved ${n(abs)} earlier — it lies on the critical path, so the scheduler pulls it forward to reduce overall execution latency. Delaying it would have pushed back every pass that depends on it.`;
+        if (bd.slackBonus > 0)
+            return `Moved ${n(abs)} earlier — it had zero scheduling slack, meaning any later placement would stall the passes downstream that depend on it.`;
+        if (bd.memoryFreedBytes > bd.memoryAllocatedPenalty)
+            return `Moved ${n(abs)} earlier — running it sooner releases its input resources back to the pool, reducing peak GPU memory pressure before new allocations are needed.`;
+        return `Moved ${n(abs)} earlier — its combined score (critical path + slack + memory) ranked it above the passes that preceded it in the authored order.`;
+    }
+
+    // delta > 0 — moved later. Find passes that jumped ahead of this one.
+    const jumpedAhead: ScheduledPass[] = [];
+    for (let si = authPos; si < sugPos; si++) {
+        const other = schedule.passes[si];
+        if (!other || other.passId === pid) continue;
+        if ((authIdx.get(other.passId) ?? si) > authPos) jumpedAhead.push(other);
+    }
+
+    if (jumpedAhead.length === 0)
+        return `Moved ${n(delta)} later — passes that appeared earlier in the authored order scored higher at each step where this pass became ready.`;
+
+    const lead    = jumpedAhead[0];
+    const names   = jumpedAhead.slice(0, 2).map((p) => `"${p.passName}"`).join(" and ");
+    const extra   = jumpedAhead.length > 2 ? ` (+${jumpedAhead.length - 2} more)` : "";
+    const r       = lead.rationale.toLowerCase();
+    const because = r.includes("critical")    ? "they are on the critical path and would stall dependents if delayed"
+                  : r.includes("zero slack")  ? "they had zero slack and could not be deferred without cascading delays"
+                  : r.includes("frees")       ? "scheduling them first freed memory before new allocations were needed"
+                  : r.includes("only ready")  ? "they were the only dependency-ready passes at those steps"
+                  :                             "they scored higher across critical-path cost, memory, and slack";
+    return `Moved ${n(delta)} later — ${names}${extra} jumped ahead because ${because}.`;
+}
+
 // ─── Compare Tab ──────────────────────────────────────────────────────────────
 
 function CompareTab({
@@ -617,6 +679,11 @@ function CompareTab({
         });
         return m;
     }, [authoredOrder, authIdx, sugIdx]);
+
+    const scheduledById = useMemo(
+        () => new Map(schedule.passes.map((p) => [p.passId, p])),
+        [schedule.passes],
+    );
 
     const [filter, setFilter] = useState<"all" | "moved" | "same">("all");
     const [hoveredPid, setHoveredPid] = useState<PassId | null>(null);
@@ -720,6 +787,64 @@ function CompareTab({
                     </div>
                 </div>
             </div>
+
+            {/* Hover details panel */}
+            {hoveredPid && (() => {
+                const sp    = scheduledById.get(hoveredPid);
+                const delta = deltaMap.get(hoveredPid) ?? 0;
+                const authPos = (authIdx.get(hoveredPid) ?? 0) + 1;
+                const sugPos  = (sugIdx.get(hoveredPid)  ?? 0) + 1;
+                const bd      = sp?.scoreBreakdown;
+                return (
+                    <div className="shrink-0 border-t border-zinc-700/60 bg-zinc-900/80 px-4 py-2.5 text-[11px] space-y-1">
+                        <div className="flex items-center gap-2">
+                            {delta === 0 ? (
+                                <span className="text-zinc-500 font-mono">─</span>
+                            ) : delta < 0 ? (
+                                <span className="text-sky-400 font-mono">↑{Math.abs(delta)}</span>
+                            ) : (
+                                <span className="text-amber-400 font-mono">↓{delta}</span>
+                            )}
+                            <span className="font-semibold text-zinc-200">
+                                {pipeline.passes[hoveredPid]?.name ?? hoveredPid}
+                            </span>
+                            <span className="text-zinc-600">
+                                {delta === 0
+                                    ? `pos ${authPos} → unchanged`
+                                    : `pos ${authPos} → ${sugPos}`}
+                            </span>
+                        </div>
+                        {sp && (
+                            <>
+                                <div className="text-zinc-300 leading-snug">
+                                    {explainReordering(
+                                        hoveredPid,
+                                        authPos - 1,
+                                        sugPos  - 1,
+                                        sp,
+                                        schedule,
+                                        authIdx,
+                                    )}
+                                </div>
+                                {bd && (
+                                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-zinc-500 font-mono text-[10px]">
+                                        <span>cp <span className="text-zinc-400">{bd.criticalPathCost.toFixed(2)}</span></span>
+                                        <span>mem freed <span className="text-zinc-400">{bd.memoryFreedBytes.toFixed(2)}</span></span>
+                                        <span>mem alloc <span className={bd.memoryAllocatedPenalty > 0 ? "text-amber-400/70" : "text-zinc-400"}>{bd.memoryAllocatedPenalty.toFixed(2)}</span></span>
+                                        <span>slack <span className={bd.slackBonus > 0 ? "text-sky-400/70" : "text-zinc-400"}>{bd.slackBonus.toFixed(2)}</span></span>
+                                        <span>order <span className="text-zinc-400">{bd.authoredOrderBias.toFixed(2)}</span></span>
+                                    </div>
+                                )}
+                                {sp.candidatePassIds.length > 1 && (
+                                    <div className="text-zinc-600 text-[10px]">
+                                        {sp.candidatePassIds.length} passes were ready — this had the highest score
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                );
+            })()}
 
             <div className="shrink-0 px-4 py-2 border-t border-zinc-800 text-[10px] text-zinc-600">
                 ↑ sky = moved earlier &nbsp;·&nbsp; ↓ amber = moved later &nbsp;·&nbsp; Suggested order is advisory — pipeline is not modified

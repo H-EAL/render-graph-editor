@@ -16,6 +16,7 @@ import { InputEditorPanel } from "../features/inputs/InputEditorPanel";
 import { PipelineGraphModal } from "../features/pipeline/PipelineGraphModal";
 import { ExecutionAnalysisModal } from "../features/analysis/ExecutionAnalysisModal";
 import { computeMemStats, formatBytes } from "../utils/memoryStats";
+import { useEffectiveResources } from "../utils/systemResources";
 
 // ─── Resize hooks ─────────────────────────────────────────────────────────────
 
@@ -356,6 +357,7 @@ function StatusBar({
     onOpenStats: () => void;
 }) {
     const { pipeline, resources, inputDefinitions } = useStore();
+    const effectiveResources = useEffectiveResources();
     const globalPipeline = useStore((s) => s.pipelines[0]?.pipeline);
     const globalWrittenIds = useMemo(() => {
         if (!globalPipeline) return undefined;
@@ -368,7 +370,7 @@ function StatusBar({
         }
         return ids;
     }, [globalPipeline]);
-    const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions, globalWrittenIds), [pipeline, resources, inputDefinitions, globalWrittenIds]);
+    const issues = useMemo(() => validateDocument(pipeline, effectiveResources, inputDefinitions, globalWrittenIds), [pipeline, effectiveResources, inputDefinitions, globalWrittenIds]);
     const errors = issues.filter((i) => i.severity === "error");
     const warnings = issues.filter((i) => i.severity === "warning");
     const vram = useMemo(
@@ -437,7 +439,8 @@ function StatusBar({
 // ─── Validation popover ───────────────────────────────────────────────────────
 
 function ValidationPopover({ onClose }: { onClose: () => void }) {
-    const { pipeline, resources, inputDefinitions } = useStore();
+    const { pipeline, inputDefinitions } = useStore();
+    const effectiveResources = useEffectiveResources();
     const globalPipeline = useStore((s) => s.pipelines[0]?.pipeline);
     const globalWrittenIds = useMemo(() => {
         if (!globalPipeline) return undefined;
@@ -450,7 +453,7 @@ function ValidationPopover({ onClose }: { onClose: () => void }) {
         }
         return ids;
     }, [globalPipeline]);
-    const issues = useMemo(() => validateDocument(pipeline, resources, inputDefinitions, globalWrittenIds), [pipeline, resources, inputDefinitions, globalWrittenIds]);
+    const issues = useMemo(() => validateDocument(pipeline, effectiveResources, inputDefinitions, globalWrittenIds), [pipeline, effectiveResources, inputDefinitions, globalWrittenIds]);
     const errors = issues.filter((i) => i.severity === "error");
     const warnings = issues.filter((i) => i.severity === "warning");
     const ref = useRef<HTMLDivElement>(null);

@@ -17,6 +17,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '../../state/store';
+import { useEffectiveResources } from '../../utils/systemResources';
 import type { RasterStep, RasterCommand, EnableIfCommand, PassId, StepId } from '../../types';
 
 const DRAW_TYPE_ABBR: Record<string, string> = { batch: 'DRAW', batchWithMaterials: 'MAT', fullscreen: 'FS', debugLines: 'DBG' };
@@ -163,7 +164,7 @@ function EnableIfCommandBlock({ cmd, stepId }: { cmd: EnableIfCommand; stepId: S
 // ─── Attachment summary chip ───────────────────────────────────────────────────
 
 function AttachmentSummary({ step }: { step: RasterStep }) {
-  const { resources } = useStore();
+  const resources = useEffectiveResources();
   const colorCount = step.attachments.colorAttachments.length;
   const hasDepth   = !!step.attachments.depthAttachment;
 

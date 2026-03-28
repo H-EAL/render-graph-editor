@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useStore } from "../state/store";
+import { useEffectiveResources } from "../utils/systemResources";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,7 +49,8 @@ interface GlobalSearchProps {
 }
 
 export function GlobalSearch({ open, onClose }: GlobalSearchProps) {
-    const { pipeline, resources, selectPass, selectStep, selectResource } = useStore();
+    const { pipeline, selectPass, selectStep, selectResource } = useStore();
+    const resources = useEffectiveResources();
     const [query, setQuery] = useState("");
     const [activeIdx, setActiveIdx] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);

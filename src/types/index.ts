@@ -488,6 +488,8 @@ export interface Pipeline {
     timelines: Timeline[];
     passes: Record<PassId, Pass>;
     steps: Record<StepId, Step>;
+    /** ResourceId of the RT designated as the default canvas blit target (VIEW_RENDER_TARGET alias). */
+    defaultViewRenderTargetId?: ResourceId;
 }
 
 // ─── Full Document ────────────────────────────────────────────────────────────

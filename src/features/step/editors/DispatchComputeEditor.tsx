@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useStore } from "../../../state/store";
+import { useEffectiveResources } from "../../../utils/systemResources";
 import { ResourceSelect } from "../../../components/ui/ResourceSelect";
 import { ValueSourceEditor } from "../../../components/ui/ValueSourceEditor";
 import { FieldRow } from "../../../components/ui/Panel";
@@ -8,7 +9,8 @@ import type { ShaderRTSlot, SlotAccess } from "../../../utils/shaderApi";
 import type { DispatchComputeStep, ValueSource } from "../../../types";
 
 export function DispatchComputeEditor({ step }: { step: DispatchComputeStep }) {
-    const { updateStep, resources } = useStore();
+    const { updateStep } = useStore();
+    const resources = useEffectiveResources();
     const u = (patch: object) => updateStep(step.id, patch as never);
     const computeShaders = resources.shaders.map((s) => ({ value: s.id, label: s.name }));
 

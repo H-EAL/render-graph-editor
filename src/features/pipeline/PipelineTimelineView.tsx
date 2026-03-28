@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react";
+import { useMemo, useState, useRef, useEffect, useCallback, Fragment, type KeyboardEvent } from "react";
 import {
     DndContext,
     closestCenter,
@@ -17,6 +17,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useStore } from "../../state/store";
+import { useEffectiveResources, isSystemResource, SYSTEM_RENDER_TARGETS } from "../../utils/systemResources";
 import {
     deriveDependencies,
     getResourceUsage,
@@ -252,6 +253,7 @@ interface SortableResourceLabelProps {
     isDimmed: boolean;
     isDraggable: boolean;
     isHidden: boolean;
+    isSystem?: boolean;
     onSelect: (e: React.MouseEvent) => void;
     onContextMenu: (e: React.MouseEvent) => void;
     onToggleVisibility: (e: React.MouseEvent) => void;
@@ -269,6 +271,7 @@ function SortableResourceLabel({
     isDimmed,
     isDraggable,
     isHidden,
+    isSystem,
     onSelect,
     onContextMenu,
     onToggleVisibility,
@@ -300,7 +303,8 @@ function SortableResourceLabel({
                 background: bg,
                 zIndex: isDragging ? 50 : undefined,
             }}
-            className={`group/row flex items-center gap-1 px-1 border-t border-dashed border-purple-800/40 cursor-pointer select-none
+            className={`group/row flex items-center gap-1 px-1 border-t border-dashed cursor-pointer select-none
+        ${isSystem ? "border-cyan-800/40" : "border-purple-800/40"}
         ${isSelected ? "ring-1 ring-inset ring-sky-500/40" : "hover:bg-white/2"}`}
             title={tooltip}
             onClick={onSelect}
@@ -340,13 +344,15 @@ function SortableResourceLabel({
                     ⚠
                 </span>
             )}
-            <button
-                onClick={onToggleVisibility}
-                className={`shrink-0 text-[9px] leading-none transition-colors ${isHidden ? "text-zinc-500 hover:text-zinc-200" : "opacity-0 group-hover/row:opacity-100 text-zinc-600 hover:text-zinc-300"}`}
-                title={isHidden ? "Show in timeline" : "Hide from timeline"}
-            >
-                {isHidden ? "◌" : "●"}
-            </button>
+            {!isSystem && (
+                <button
+                    onClick={onToggleVisibility}
+                    className={`shrink-0 text-[9px] leading-none transition-colors ${isHidden ? "text-zinc-500 hover:text-zinc-200" : "opacity-0 group-hover/row:opacity-100 text-zinc-600 hover:text-zinc-300"}`}
+                    title={isHidden ? "Show in timeline" : "Hide from timeline"}
+                >
+                    {isHidden ? "◌" : "●"}
+                </button>
+            )}
         </div>
     );
 }
@@ -371,9 +377,9 @@ function isGpuToCpu(desc?: string): boolean {
 export function PipelineTimelineView() {
     const activePipelineRole = useStore((s) => s.pipelines[s.activePipelineIndex]?.role);
 
+    const resources = useEffectiveResources();
     const {
         pipeline,
-        resources,
         selectedPassId,
         selectedResourceId,
         resourceOrder,
@@ -792,14 +798,23 @@ export function PipelineTimelineView() {
         return ids;
     }, [activePipelineRole, pipeline.passes, pipeline.steps]);
 
+    const systemRtRows = useMemo((): ResourceId[] => {
+        if (activePipelineRole !== "perView") return [];
+        return SYSTEM_RENDER_TARGETS
+            .map((rt) => rt.id as ResourceId)
+            .filter((id) => validResIds.has(id));
+    }, [activePipelineRole, validResIds]);
+
     const overlayRows = useMemo(() => {
-        return resourceOrder.filter(
+        const userRows = resourceOrder.filter(
             (id) =>
                 validResIds.has(id) &&
+                !isSystemResource(id) &&
                 (showHidden || !hiddenSet.has(id)) &&
                 (globalPipelineResIds === null || globalPipelineResIds.has(id)),
         );
-    }, [resourceOrder, validResIds, showHidden, hiddenSet, globalPipelineResIds]);
+        return [...systemRtRows, ...userRows];
+    }, [systemRtRows, resourceOrder, validResIds, showHidden, hiddenSet, globalPipelineResIds]);
 
     const layout = useLayout(pipeline, allEdges, overlayRows.length);
 
@@ -1183,7 +1198,7 @@ export function PipelineTimelineView() {
             const oldIdx = filteredRows.indexOf(active.id as ResourceId);
             const newIdx = filteredRows.indexOf(over.id as ResourceId);
             const reordered = arrayMove(filteredRows, oldIdx, newIdx);
-            setResourceOrder(reordered.filter((id) => validResIds.has(id)));
+            setResourceOrder(reordered.filter((id) => validResIds.has(id) && !isSystemResource(id)));
             setSortMode("manual");
         }
     };
@@ -2465,18 +2480,20 @@ export function PipelineTimelineView() {
                                 onDragEnd={onResourceDragEnd}
                             >
                                 <SortableContext
-                                    items={filteredRows}
+                                    items={filteredRows.filter((id) => !isSystemResource(id))}
                                     strategy={verticalListSortingStrategy}
                                 >
-                                    {filteredRows.map((rid) => {
+                                    {filteredRows.map((rid, rowMapIdx) => {
                                         const rtObj = rtMap.get(rid);
                                         const bufObj = bufMap.get(rid);
                                         const bsObj = bsMap.get(rid);
                                         const paramObj = paramMap.get(rid);
                                         const miObj = miMap.get(rid);
                                         const name = paramObj ? paramObj.name : miObj ? miObj.name : resolveIds([rid]);
+                                        const isSysRt = isSystemResource(rid);
+                                        const isDefaultViewRt = rid === pipeline.defaultViewRenderTargetId;
                                         const tooltip = rtObj
-                                            ? `${rtObj.name}\nType: Render Target\nFormat: ${rtObj.format}\nSize: ${fmtRTSize(rtObj.width)} × ${fmtRTSize(rtObj.height)}\nMips: ${rtObj.mips}`
+                                            ? `${rtObj.name}\nType: Render Target${isDefaultViewRt ? " (default view RT)" : ""}\nFormat: ${rtObj.format}\nSize: ${fmtRTSize(rtObj.width)} × ${fmtRTSize(rtObj.height)}\nMips: ${rtObj.mips}`
                                             : bufObj
                                               ? `${bufObj.name}\nType: Buffer\nSize: ${bufObj.size}`
                                               : bsObj
@@ -2490,68 +2507,76 @@ export function PipelineTimelineView() {
                                         const isBS = !!bsObj;
                                         const isParam = !!paramObj;
                                         const isMI = !!miObj;
-                                        const icon = isRT ? "▣" : isBS ? "⊞" : isParam ? "◈" : isMI ? "◇" : "▤";
-                                        const iconCls = isRT
-                                            ? "text-blue-400/80"
-                                            : isBS
-                                              ? "text-pink-400/80"
-                                              : isParam
-                                                ? "text-green-400/80"
-                                                : isMI
-                                                  ? "text-teal-400/80"
-                                                  : "text-amber-400/80";
-                                        const isDead = deadWriteIds.has(rid);
-                                        const isUnused = unusedIds.has(rid);
+                                        const icon = isDefaultViewRt ? "⊙" : isRT ? "▣" : isBS ? "⊞" : isParam ? "◈" : isMI ? "◇" : "▤";
+                                        const iconCls = isSysRt
+                                            ? "text-cyan-400/80"
+                                            : isRT
+                                              ? "text-blue-400/80"
+                                              : isBS
+                                                ? "text-pink-400/80"
+                                                : isParam
+                                                  ? "text-green-400/80"
+                                                  : isMI
+                                                    ? "text-teal-400/80"
+                                                    : "text-amber-400/80";
+                                        const isDead = !isSysRt && deadWriteIds.has(rid);
+                                        const isUnused = !isSysRt && unusedIds.has(rid);
+                                        const isLastSysRt = isSysRt && !isSystemResource(filteredRows[rowMapIdx + 1] ?? "");
                                         return (
-                                            <SortableResourceLabel
-                                                key={rid}
-                                                rid={rid}
-                                                name={name}
-                                                tooltip={tooltip}
-                                                icon={icon}
-                                                iconCls={iconCls}
-                                                isDead={isDead}
-                                                isUnused={isUnused}
-                                                isSelected={activeResourceIds.has(rid)}
-                                                isDimmed={
-                                                    hasResourceFocus && !activeResourceIds.has(rid)
-                                                }
-                                                isDraggable={
-                                                    sortMode === "manual" && !hasActiveFilter
-                                                }
-                                                onSelect={(e) => {
-                                                    noScrollRef.current = true;
-                                                    if (e.ctrlKey || e.metaKey) {
-                                                        const next = new Set(selectedResourceIds);
-                                                        if (next.has(rid)) {
-                                                            next.delete(rid);
-                                                            selectResource(
-                                                                next.size > 0
-                                                                    ? [...next][next.size - 1]
-                                                                    : null,
-                                                            );
-                                                        } else {
-                                                            next.add(rid);
-                                                            selectResource(rid);
-                                                        }
-                                                        setSelectedResourceIds(next);
-                                                    } else {
-                                                        const isSole =
-                                                            selectedResourceIds.size === 1 &&
-                                                            selectedResourceIds.has(rid);
-                                                        setSelectedResourceIds(
-                                                            isSole ? new Set() : new Set([rid]),
-                                                        );
-                                                        selectResource(isSole ? null : rid);
+                                            <Fragment key={rid}>
+                                                <SortableResourceLabel
+                                                    rid={rid}
+                                                    name={name}
+                                                    tooltip={tooltip}
+                                                    icon={icon}
+                                                    iconCls={iconCls}
+                                                    isDead={isDead}
+                                                    isUnused={isUnused}
+                                                    isSelected={activeResourceIds.has(rid)}
+                                                    isDimmed={
+                                                        hasResourceFocus && !activeResourceIds.has(rid)
                                                     }
-                                                }}
-                                                isHidden={hiddenSet.has(rid)}
-                                                onToggleVisibility={(e) => {
-                                                    e.stopPropagation();
-                                                    toggleResourceVisibility(rid);
-                                                }}
-                                                onContextMenu={(e) => openContextMenu(rid, e)}
-                                            />
+                                                    isDraggable={
+                                                        !isSysRt && sortMode === "manual" && !hasActiveFilter
+                                                    }
+                                                    isSystem={isSysRt}
+                                                    onSelect={(e) => {
+                                                        noScrollRef.current = true;
+                                                        if (e.ctrlKey || e.metaKey) {
+                                                            const next = new Set(selectedResourceIds);
+                                                            if (next.has(rid)) {
+                                                                next.delete(rid);
+                                                                selectResource(
+                                                                    next.size > 0
+                                                                        ? [...next][next.size - 1]
+                                                                        : null,
+                                                                );
+                                                            } else {
+                                                                next.add(rid);
+                                                                selectResource(rid);
+                                                            }
+                                                            setSelectedResourceIds(next);
+                                                        } else {
+                                                            const isSole =
+                                                                selectedResourceIds.size === 1 &&
+                                                                selectedResourceIds.has(rid);
+                                                            setSelectedResourceIds(
+                                                                isSole ? new Set() : new Set([rid]),
+                                                            );
+                                                            selectResource(isSole ? null : rid);
+                                                        }
+                                                    }}
+                                                    isHidden={hiddenSet.has(rid)}
+                                                    onToggleVisibility={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleResourceVisibility(rid);
+                                                    }}
+                                                    onContextMenu={(e) => { if (!isSysRt) openContextMenu(rid, e); }}
+                                                />
+                                                {isLastSysRt && (
+                                                    <div className="border-t border-cyan-700/40 mx-1" style={{ height: 0 }} />
+                                                )}
+                                            </Fragment>
                                         );
                                     })}
                                 </SortableContext>

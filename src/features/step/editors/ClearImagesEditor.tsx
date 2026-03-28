@@ -1,11 +1,13 @@
 import { useStore } from '../../../state/store';
+import { useEffectiveResources } from '../../../utils/systemResources';
 import { ResourceSelect } from '../../../components/ui/ResourceSelect';
 import { Button } from '../../../components/ui/Button';
 import { FieldRow } from '../../../components/ui/Panel';
 import type { ClearImagesStep, ClearTarget } from '../../../types';
 
 export function ClearImagesEditor({ step }: { step: ClearImagesStep }) {
-  const { updateStep, resources } = useStore();
+  const { updateStep } = useStore();
+  const resources = useEffectiveResources();
   const rtOpts = resources.renderTargets.map((r) => ({ value: r.id, label: r.name }));
 
   const updateTarget = (index: number, patch: Partial<ClearTarget>) => {

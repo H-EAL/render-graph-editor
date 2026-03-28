@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useStore } from "../../../state/store";
+import { useEffectiveResources } from "../../../utils/systemResources";
 import { Input } from "../../../components/ui/Input";
 import { ResourceSelect } from "../../../components/ui/ResourceSelect";
 import { ValueSourceEditor } from "../../../components/ui/ValueSourceEditor";
@@ -9,7 +10,8 @@ import type { ShaderRTSlot } from "../../../utils/shaderApi";
 import type { DispatchRayTracingStep, ValueSource } from "../../../types";
 
 export function DispatchRayTracingEditor({ step }: { step: DispatchRayTracingStep }) {
-    const { updateStep, resources } = useStore();
+    const { updateStep } = useStore();
+    const resources = useEffectiveResources();
     const u = (patch: object) => updateStep(step.id, patch as never);
     const rtShaders = resources.shaders
         .filter((s) => ["raygen", "miss", "closesthit"].includes(s.stage))

@@ -17,6 +17,8 @@
  *  .graphOrder[]                [[passIdx|-1, nodeIdx], …] — execution order
  */
 
+import { SYSTEM_RT_IDS, VIEW_RT_INDEX } from "./systemResources";
+
 import type {
     PipelineDocument,
     Pipeline,
@@ -199,9 +201,33 @@ export function importRgJson(raw: unknown): PipelineDocument {
 
     const rtCount = (rg.renderTargetDescriptions ?? []).length;
 
-    /** Validates that an RT index actually exists in renderTargetDescriptions */
+    // System RT indices by their full uint32 value (for attachment arrays / direct indices)
+    const SYSTEM_BY_FULL = new Map<number, string>([
+        [4294967279, SYSTEM_RT_IDS.CANVAS_COLOR],
+        [4294967278, SYSTEM_RT_IDS.CANVAS_PICKING],
+        [4294967277, SYSTEM_RT_IDS.CANVAS_NORMAL],
+        // VIEW_RENDER_TARGET (UINT32_MAX-19) is an alias for a user-defined RT, not a system
+        // resource. We preserve its index as-is so the pass reference is not silently dropped.
+        [4294967276, VIEW_RT_INDEX],
+    ]);
+
+    // System RT indices by their lower 16 bits (for (access<<16)|rtIdx encoded shader bindings)
+    // e.g. 4294967279 & 0xffff = 65519
+    const SYSTEM_BY_LO16 = new Map<number, string>([
+        [65519, SYSTEM_RT_IDS.CANVAS_COLOR],
+        [65518, SYSTEM_RT_IDS.CANVAS_PICKING],
+        [65517, SYSTEM_RT_IDS.CANVAS_NORMAL],
+        [65516, VIEW_RT_INDEX],
+    ]);
+
+    /** Validates that an RT index is either a user RT or a known system RT */
     function validRtIdx(idx: number): boolean {
-        return Number.isFinite(idx) && idx >= 0 && idx < rtCount;
+        return (Number.isFinite(idx) && idx >= 0 && idx < rtCount) || SYSTEM_BY_FULL.has(idx);
+    }
+
+    /** Resolve a direct RT index (attachment arrays, inputRenderTargetIndices, etc.) to a ResourceId */
+    function resolveRt(idx: number): string {
+        return SYSTEM_BY_FULL.get(idx) ?? rtById.get(idx) ?? "";
     }
 
     // ── Render targets ──────────────────────────────────────────────────────────
@@ -397,7 +423,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
     function rtIds(indices: number[] | undefined): string[] {
         return (indices ?? [])
             .filter(validRtIdx)
-            .map((i) => rtById.get(i) ?? "")
+            .map(resolveRt)
             .filter(Boolean);
     }
 
@@ -609,8 +635,10 @@ export function importRgJson(raw: unknown): PipelineDocument {
             if (!key.startsWith(RG_PREFIX)) continue;
             const slot = key.slice(RG_PREFIX.length);
             if (typeof rawValue === "number" && (slot.endsWith("_rt") || rawValue > 0xffff)) {
-                const rtIdx = rawValue & 0xffff;
-                const rid = rtById.get(rtIdx);
+                // Full-value system RT check first, then fall back to lo16 encoding
+                const rid = SYSTEM_BY_FULL.get(rawValue)
+                    ?? rtById.get(rawValue & 0xffff)
+                    ?? SYSTEM_BY_LO16.get(rawValue & 0xffff);
                 if (rid) result[slot] = rid;
             } else if (typeof rawValue === "number" || typeof rawValue === "boolean") {
                 result[slot] = rawValue;
@@ -648,7 +676,10 @@ export function importRgJson(raw: unknown): PipelineDocument {
             }
             const hi = (encodedValue as number) >>> 16;
             const rtIdx = (encodedValue as number) & 0xffff;
-            const rid = rtById.get(rtIdx);
+            // Check system RT by full value first (unencoded), then by lo16 (encoded)
+            const rid = SYSTEM_BY_FULL.get(encodedValue as number)
+                ?? rtById.get(rtIdx)
+                ?? SYSTEM_BY_LO16.get(rtIdx);
             if (!rid) {
                 // Integer that doesn't resolve to a known RT → scalar constant
                 constants[slotName] = encodedValue as number;
@@ -722,7 +753,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
                 // Local attachmentDescriptions is ordered: color[0..n-1], depth[n], resolve[n+1..]
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const att: any = rp.attachmentDescriptions?.[i];
-                const target = rtById.get(globalRtIdx) ?? "";
+                const target = resolveRt(globalRtIdx);
                 if (!target) continue;
                 const clearColor = (rp.attachmentClearColors?.[i] ?? [0, 0, 0, 0]) as [
                     number,
@@ -747,7 +778,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const att: any = rp.attachmentDescriptions?.[depthLocalIdx];
                 depthAttachment = {
-                    target: rtById.get(globalDepthIdx) ?? "",
+                    target: resolveRt(globalDepthIdx),
                     loadOp: VK_LOAD_OP[att?.loadOp] ?? "load",
                     storeOp: VK_STORE_OP[att?.storeOp] ?? "store",
                     clearValue: 1,
@@ -852,8 +883,8 @@ export function importRgJson(raw: unknown): PipelineDocument {
             const resolveIndices = (rp.resolveAttachmentIndices ?? []) as number[];
             const resolveAttachments = resolveIndices
                 .map((ri, i) => ({
-                    source: rtById.get(colorIndices[i]) ?? "",
-                    destination: rtById.get(ri) ?? "",
+                    source: resolveRt(colorIndices[i]),
+                    destination: resolveRt(ri),
                 }))
                 .filter((r) => r.source && r.destination);
             const resolveTargets = resolveAttachments.map((r) => r.destination);
@@ -867,7 +898,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
                 const node: any = nodeByIndex.get(ni);
                 if (!node) continue;
                 for (const rtIdx of (node.inputRenderTargetIndices ?? []) as number[]) {
-                    const rid = rtById.get(rtIdx);
+                    const rid = resolveRt(rtIdx);
                     if (rid) passReads.add(rid);
                 }
             }
@@ -997,7 +1028,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
                     const targets = (node.outputRenderTargetIndices ?? ([] as number[]))
                         .filter(validRtIdx)
                         .map((rtIdx: number, ci: number) => ({
-                            target: rtById.get(rtIdx) ?? "",
+                            target: resolveRt(rtIdx),
                             clearValue: (node.clearColors?.[ci] ?? [0, 0, 0, 0]) as [
                                 number,
                                 number,
@@ -1156,6 +1187,8 @@ export function importRgJson(raw: unknown): PipelineDocument {
         passIds: timelinePassIds,
     };
 
+    const defaultViewRenderTargetId = rtById.get(rg.defaultRenderTargetIndex) ?? undefined;
+
     const pipeline: Pipeline = {
         id: rg.uuid ?? "imported",
         name: rg.name ?? "Imported Pipeline",
@@ -1163,6 +1196,7 @@ export function importRgJson(raw: unknown): PipelineDocument {
         timelines: [timeline],
         passes,
         steps,
+        ...(defaultViewRenderTargetId ? { defaultViewRenderTargetId } : {}),
     };
 
     return { pipeline, resources, inputDefinitions };

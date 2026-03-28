@@ -1,4 +1,5 @@
 import { useStore } from '../../../state/store';
+import { useEffectiveResources } from '../../../utils/systemResources';
 import { ResourceSelect } from '../../../components/ui/ResourceSelect';
 import { Select } from '../../../components/ui/Select';
 import { FieldRow } from '../../../components/ui/Panel';
@@ -9,7 +10,8 @@ type TransferStep = CopyImageStep | BlitImageStep | ResolveImageStep;
 const FILTER_OPTS = [{ value: 'nearest', label: 'Nearest' }, { value: 'linear', label: 'Linear' }];
 
 export function ImageTransferEditor({ step }: { step: TransferStep }) {
-  const { updateStep, resources } = useStore();
+  const { updateStep } = useStore();
+  const resources = useEffectiveResources();
   const u = (patch: object) => updateStep(step.id, patch as never);
   const rtOpts = resources.renderTargets.map((r) => ({ value: r.id, label: r.name }));
 

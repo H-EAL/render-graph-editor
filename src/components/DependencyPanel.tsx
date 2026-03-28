@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../state/store';
+import { useEffectiveResources } from '../utils/systemResources';
 import { deriveDependencies, type DependencyEdge } from '../utils/dependencyGraph';
 import type { PassId, Pipeline, TimelineId } from '../types';
 
@@ -137,7 +138,8 @@ function useLayout(
 // ─── Main panel ────────────────────────────────────────────────────────────────
 
 export function DependencyPanel() {
-  const { pipeline, resources, selectedPassId, selectPass } = useStore();
+  const { pipeline, selectedPassId, selectPass } = useStore();
+  const resources = useEffectiveResources();
   const [filter,     setFilter]     = useState<'all' | 'cross' | 'focused'>('all');
   const [showSameTL, setShowSameTL] = useState(false);
 

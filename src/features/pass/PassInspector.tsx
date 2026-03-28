@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useStore } from "../../state/store";
+import { useEffectiveResources } from "../../utils/systemResources";
 import { StepList } from "../step/StepList";
 import { Input } from "../../components/ui/Input";
 import { Textarea } from "../../components/ui/Input";
@@ -24,7 +25,7 @@ function DependencyRow({
     isCrossTimeline: boolean;
     timelineName: string;
 }) {
-    const { resources } = useStore();
+    const resources = useEffectiveResources();
     const resourceNames = resourceIds.map(
         (rid) =>
             resources.renderTargets.find((r) => r.id === rid)?.name ??
@@ -69,13 +70,13 @@ interface PendingEnumChange {
 export function PassInspector() {
     const {
         pipeline,
-        resources,
         inputDefinitions,
         selectedPassId,
         updatePass,
         selectResource,
         setPassVariantEnum,
     } = useStore();
+    const resources = useEffectiveResources();
     const pass = selectedPassId ? pipeline.passes[selectedPassId] : null;
     const [editingVariantId, setEditingVariantId] = useState<VariantId | null>(null);
     const [pendingEnumChange, setPendingEnumChange] = useState<PendingEnumChange | null>(null);

@@ -1,4 +1,5 @@
 import { useStore } from "../../state/store";
+import { useEffectiveResources } from "../../utils/systemResources";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { FieldRow, InspectorSection } from "../../components/ui/Panel";
@@ -69,7 +70,8 @@ function ColorAttachmentRow({
     att: ColorAttachment;
     step: RasterStep;
 }) {
-    const { updateStep, resources } = useStore();
+    const { updateStep } = useStore();
+    const resources = useEffectiveResources();
     const rtOpts = resources.renderTargets.map((r) => ({ value: r.id, label: r.name }));
 
     // Check if the attached RT is multisampled
@@ -197,7 +199,8 @@ function ColorAttachmentRow({
 }
 
 function DepthAttachmentSection({ step }: { step: RasterStep }) {
-    const { updateStep, resources } = useStore();
+    const { updateStep } = useStore();
+    const resources = useEffectiveResources();
     const rtOpts = resources.renderTargets
         .filter((r) => r.format.startsWith("d"))
         .map((r) => ({ value: r.id, label: r.name }));

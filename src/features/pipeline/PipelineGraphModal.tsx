@@ -1,5 +1,6 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import { useStore } from "../../state/store";
+import { useEffectiveResources } from "../../utils/systemResources";
 import { deriveDependencies } from "../../utils/dependencyGraph";
 import type { DependencyEdge } from "../../utils/dependencyGraph";
 import type { Pipeline, ResourceLibrary } from "../../types";
@@ -181,7 +182,8 @@ function bezier(sx: number, sy: number, ex: number, ey: number) {
 // ── Modal ─────────────────────────────────────────────────────────────────────
 
 export function PipelineGraphModal({ onClose }: { onClose: () => void }) {
-    const { pipeline, resources, conditionOverrides } = useStore();
+    const { pipeline, conditionOverrides } = useStore();
+    const resources = useEffectiveResources();
     const conditionDefaults = useMemo(() => buildConditionDefaults(resources), [resources]);
     const edges = useMemo(() => deriveDependencies(pipeline), [pipeline]);
     const { nodes, svgW, svgH, nodePos, tlColorMap } = useMemo(

@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useStore } from "../../state/store";
+import { useEffectiveResources } from "../../utils/systemResources";
 import { inferStepResources } from "../../utils/inferStepResources";
 import type {
     Timeline, Pass, Step, RasterStep, RasterCommand,
@@ -302,9 +303,9 @@ void STATE_COLOR;
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function PipelineTreeDrawer() {
+    const resources = useEffectiveResources();
     const {
         pipeline,
-        resources,
         selectedPassId,
         selectedStepId,
         selectedCommandId,

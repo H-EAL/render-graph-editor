@@ -1,4 +1,5 @@
 import { useStore } from "../../../state/store";
+import { useEffectiveResources } from "../../../utils/systemResources";
 import { Input } from "../../../components/ui/Input";
 import { Select } from "../../../components/ui/Select";
 import { FieldRow } from "../../../components/ui/Panel";
@@ -367,7 +368,8 @@ function PipelineConfigEditor({
 // ─── Draw Batch editor ────────────────────────────────────────────────────────
 
 function DrawBatchEditor({ cmd, stepId }: { cmd: DrawBatchCommand; stepId: StepId }) {
-    const { updateRasterCommand, resources, pipeline } = useStore();
+    const { updateRasterCommand, pipeline } = useStore();
+    const resources = useEffectiveResources();
     const shaderOpts = resources.shaders.map((s) => ({ value: s.id, label: s.name }));
     const blendOpts = resources.blendStates.map((b) => ({ value: b.id, label: b.name }));
     const miOpts = resources.materialInterfaces.map((m) => ({ value: m.id, label: m.name }));
