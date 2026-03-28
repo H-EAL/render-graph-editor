@@ -357,6 +357,56 @@ function SortableResourceLabel({
     );
 }
 
+// ─── Resource track colours ───────────────────────────────────────────────────
+
+/** Per-type colour tokens for the timeline canvas rows. */
+interface TrackColors {
+    spanFill:          string;
+    spanFillDim:       string;
+    edgeStroke:        string;
+    rowFillSelected:   string;
+    rowFillUnselected: string;
+    sepStroke:         string;
+    ringStroke:        string;
+}
+
+const TRACK_COLORS: Record<
+    "sysRt" | "rt" | "buffer" | "blend" | "param" | "matIface",
+    TrackColors
+> = {
+    sysRt:   { spanFill:"rgba(6,182,212,0.18)",   spanFillDim:"rgba(6,182,212,0.09)",   edgeStroke:"#22d3ee", rowFillSelected:"rgba(8,145,178,0.16)",  rowFillUnselected:"rgba(8,145,178,0.04)",  sepStroke:"#164e63", ringStroke:"#22d3ee" },
+    rt:      { spanFill:"rgba(59,130,246,0.18)",  spanFillDim:"rgba(59,130,246,0.09)",  edgeStroke:"#60a5fa", rowFillSelected:"rgba(29,78,216,0.16)",   rowFillUnselected:"rgba(29,78,216,0.04)",  sepStroke:"#1e3a8a", ringStroke:"#60a5fa" },
+    buffer:  { spanFill:"rgba(245,158,11,0.18)",  spanFillDim:"rgba(245,158,11,0.09)",  edgeStroke:"#fbbf24", rowFillSelected:"rgba(180,83,9,0.16)",    rowFillUnselected:"rgba(180,83,9,0.04)",   sepStroke:"#78350f", ringStroke:"#fbbf24" },
+    blend:   { spanFill:"rgba(236,72,153,0.18)",  spanFillDim:"rgba(236,72,153,0.09)",  edgeStroke:"#f472b6", rowFillSelected:"rgba(157,23,77,0.16)",   rowFillUnselected:"rgba(157,23,77,0.04)",  sepStroke:"#831843", ringStroke:"#f472b6" },
+    param:   { spanFill:"rgba(34,197,94,0.18)",   spanFillDim:"rgba(34,197,94,0.09)",   edgeStroke:"#4ade80", rowFillSelected:"rgba(21,128,61,0.16)",   rowFillUnselected:"rgba(21,128,61,0.04)",  sepStroke:"#14532d", ringStroke:"#4ade80" },
+    matIface:{ spanFill:"rgba(20,184,166,0.18)",  spanFillDim:"rgba(20,184,166,0.09)",  edgeStroke:"#2dd4bf", rowFillSelected:"rgba(15,118,110,0.16)",  rowFillUnselected:"rgba(15,118,110,0.04)", sepStroke:"#134e4a", ringStroke:"#2dd4bf" },
+};
+
+const TRACK_DEAD:   TrackColors = { spanFill:"rgba(217,119,6,0.18)",  spanFillDim:"rgba(217,119,6,0.10)",  edgeStroke:"#f59e0b", rowFillSelected:"rgba(120,53,15,0.18)",  rowFillUnselected:"rgba(120,53,15,0.06)",  sepStroke:"#92400e", ringStroke:"#f59e0b" };
+const TRACK_UNUSED: TrackColors = { spanFill:"rgba(63,63,70,0.22)",   spanFillDim:"rgba(63,63,70,0.12)",   edgeStroke:"#52525b", rowFillSelected:"rgba(63,63,70,0.22)",   rowFillUnselected:"rgba(63,63,70,0.10)",   sepStroke:"#3f3f46", ringStroke:"#71717a" };
+
+function resourceTrackColors(
+    _rid: string,
+    isDead: boolean,
+    isUnused: boolean,
+    isSysRt: boolean,
+    isRt: boolean,
+    isBuf: boolean,
+    isBs: boolean,
+    isParam: boolean,
+    isMI: boolean,
+): TrackColors {
+    if (isDead)   return TRACK_DEAD;
+    if (isUnused) return TRACK_UNUSED;
+    if (isSysRt)  return TRACK_COLORS.sysRt;
+    if (isRt)     return TRACK_COLORS.rt;
+    if (isBuf)    return TRACK_COLORS.buffer;
+    if (isBs)     return TRACK_COLORS.blend;
+    if (isParam)  return TRACK_COLORS.param;
+    if (isMI)     return TRACK_COLORS.matIface;
+    return TRACK_COLORS.rt; // fallback
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Returns true if the description indicates a GPU→CPU readback memory type. */
@@ -2696,37 +2746,20 @@ export function PipelineTimelineView() {
                                         const isDead = deadWriteIds.has(rid);
                                         const isUnused = unusedIds.has(rid);
                                         const isDimmed = hasResourceFocus && !isSelected;
-                                        const spanFill = isDead
-                                            ? "rgba(217,119,6,0.18)"
-                                            : isUnused
-                                              ? "rgba(63,63,70,0.22)"
-                                              : "rgba(147,51,234,0.18)";
-                                        const spanFillDim = isDead
-                                            ? "rgba(217,119,6,0.10)"
-                                            : isUnused
-                                              ? "rgba(63,63,70,0.12)"
-                                              : "rgba(147,51,234,0.10)";
-                                        const edgeStroke = isDead
-                                            ? "#f59e0b"
-                                            : isUnused
-                                              ? "#52525b"
-                                              : "#a855f7";
-                                        const rowFill = isSelected
-                                            ? isDead
-                                                ? "rgba(120,53,15,0.18)"
-                                                : isUnused
-                                                  ? "rgba(63,63,70,0.22)"
-                                                  : "rgba(88,28,135,0.14)"
-                                            : isDead
-                                              ? "rgba(120,53,15,0.06)"
-                                              : isUnused
-                                                ? "rgba(63,63,70,0.10)"
-                                                : "rgba(88,28,135,0.04)";
-                                        const sepStroke = isDead
-                                            ? "#92400e"
-                                            : isUnused
-                                              ? "#3f3f46"
-                                              : "#6b21a8";
+                                        const tc = resourceTrackColors(
+                                            rid, isDead, isUnused,
+                                            isSystemResource(rid),
+                                            rtMap.has(rid),
+                                            !!bufMap.get(rid),
+                                            !!bsMap.get(rid),
+                                            !!paramMap.get(rid),
+                                            !!miMap.get(rid),
+                                        );
+                                        const spanFill    = tc.spanFill;
+                                        const spanFillDim = tc.spanFillDim;
+                                        const edgeStroke  = tc.edgeStroke;
+                                        const rowFill     = isSelected ? tc.rowFillSelected : tc.rowFillUnselected;
+                                        const sepStroke   = tc.sepStroke;
                                         return (
                                             <g
                                                 key={rid}
@@ -2749,7 +2782,7 @@ export function PipelineTimelineView() {
                                                         width={layout.totalW}
                                                         height={OVERLAY_H}
                                                         fill="none"
-                                                        stroke={isDead ? "#f59e0b" : "#a855f7"}
+                                                        stroke={tc.ringStroke}
                                                         strokeWidth={1}
                                                         opacity={0.5}
                                                     />
