@@ -491,6 +491,12 @@ export function PipelineTimelineView() {
     // Focused view: compress passes that don't use selected resources
     const [focusedView, setFocusedView] = useState(false);
 
+    // Pass focus: hide resources not used by the selected pass
+    const [passAutoHide, setPassAutoHide] = useState(false);
+    useEffect(() => {
+        if (!selectedPassId) setPassAutoHide(false);
+    }, [selectedPassId]);
+
     // Filter state
     type ResTypeFilter = "rt" | "buf" | "param" | "bs";
     const [filterText, setFilterText] = useState("");
@@ -1125,6 +1131,26 @@ export function PipelineTimelineView() {
         return result;
     }, [resources.renderTargets, resourceSpans]);
 
+    // Resources used by the selected pass (reads + writes + condition-referenced input params)
+    const passResourceIds = useMemo(() => {
+        if (!selectedPassId) return new Set<ResourceId>();
+        const pass = pipeline.passes[selectedPassId];
+        if (!pass) return new Set<ResourceId>();
+        const d = inferPassResourcesDetailed(pass, pipeline.steps as Record<string, Step>);
+        const ids = new Set<ResourceId>([
+            ...d.colorAttachments, ...d.depthAttachments,
+            ...d.resolveAttachments.flatMap((ra) => [ra.source, ra.destination]),
+            ...d.shaderReads, ...d.shaderWrites, ...d.shaderReadWrites,
+        ]);
+        const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
+        for (const cond of pass.conditions) {
+            const name = cond.startsWith("!") ? cond.slice(1) : cond;
+            const pid = paramByName.get(name);
+            if (pid) ids.add(pid);
+        }
+        return ids;
+    }, [selectedPassId, pipeline.passes, pipeline.steps, resources.inputParameters]);
+
     const hasActiveFilter =
         filterText !== "" ||
         filterTypes.size > 0 ||
@@ -1135,9 +1161,12 @@ export function PipelineTimelineView() {
         showHidden;
 
     const filteredRows = useMemo(() => {
-        if (!hasActiveFilter) return displayRows;
+        const base = (passAutoHide && passResourceIds.size > 0)
+            ? displayRows.filter((rid) => isSystemResource(rid) || passResourceIds.has(rid))
+            : displayRows;
+        if (!hasActiveFilter) return base;
         const txt = filterText.toLowerCase();
-        return displayRows.filter((rid) => {
+        return base.filter((rid) => {
             const rt = rtMap.get(rid);
             const buf = bufMap.get(rid);
             const bs = bsMap.get(rid);
@@ -1161,6 +1190,8 @@ export function PipelineTimelineView() {
         });
     }, [
         displayRows,
+        passAutoHide,
+        passResourceIds,
         filterText,
         filterTypes,
         filterDead,
@@ -1550,27 +1581,6 @@ export function PipelineTimelineView() {
     }, [drag, dropIdx, pipeline, layout]);
 
     const crossCount = allEdges.filter((e) => e.isCrossTimeline).length;
-
-    // Resources used by the selected pass (reads + writes + condition-referenced input params)
-    const passResourceIds = useMemo(() => {
-        if (!selectedPassId) return new Set<ResourceId>();
-        const pass = pipeline.passes[selectedPassId];
-        if (!pass) return new Set<ResourceId>();
-        const d = inferPassResourcesDetailed(pass, pipeline.steps as Record<string, Step>);
-        const ids = new Set<ResourceId>([
-            ...d.colorAttachments, ...d.depthAttachments,
-            ...d.resolveAttachments.flatMap((ra) => [ra.source, ra.destination]),
-            ...d.shaderReads, ...d.shaderWrites, ...d.shaderReadWrites,
-        ]);
-        // Include input parameters whose name matches a pass condition
-        const paramByName = new Map(resources.inputParameters.map((p) => [p.name, p.id]));
-        for (const cond of pass.conditions) {
-            const name = cond.startsWith("!") ? cond.slice(1) : cond;
-            const pid = paramByName.get(name);
-            if (pid) ids.add(pid);
-        }
-        return ids;
-    }, [selectedPassId, pipeline.passes, pipeline.steps, resources.inputParameters]);
 
     // Active resource IDs for row highlighting:
     // In non-overlap mode with a single RT selected, highlight the selected RT + all
@@ -2422,6 +2432,25 @@ export function PipelineTimelineView() {
                             >
                                 ⇅
                             </button>
+                            {/* Pass focus button — only when a pass is selected */}
+                            {selectedPassId && (
+                                <button
+                                    onClick={() => setPassAutoHide((v) => !v)}
+                                    className={`text-[9px] px-1 py-0.5 rounded border border-dashed transition-colors font-mono leading-none
+                      ${
+                          passAutoHide
+                              ? "border-sky-500/70 text-sky-400 hover:text-sky-200"
+                              : "border-zinc-700/60 text-zinc-600 hover:text-zinc-300 hover:border-zinc-500"
+                      }`}
+                                    title={
+                                        passAutoHide
+                                            ? "Show all resources"
+                                            : "Hide resources not used by the selected pass"
+                                    }
+                                >
+                                    ⊡
+                                </button>
+                            )}
                             {/* Focus view button — only when resources are selected */}
                             {selectedResourceIds.size > 0 && (
                                 <button
